@@ -1,0 +1,10 @@
+.idea
+*.log
+*.pyc
+*~
+__pycache__
+
+# MAC
+.DS_Store
+
+*.png
