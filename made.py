@@ -9,6 +9,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from utils.pdb import register_pdb_hook
+
+register_pdb_hook()
+
 # ------------------------------------------------------------------------------
 class MaskedLinear(nn.Linear):
     """ same as Linear except has a configurable mask on the weights """
@@ -49,15 +53,33 @@ class MADE(nn.Module):
         # define a simple MLP neural net
         self.net = []
         hs = [nin] + hidden_sizes + [nout]
+
+        dropout_layer = nn.Dropout(0.8, inplace=True)
+
         for h0,h1 in zip(hs, hs[1:]):
             self.net += [
                 # nn.BatchNorm1d(h0),
+                dropout_layer,
                 MaskedLinear(h0, h1),
                 nn.LeakyReLU()
             ]
         self.net.pop() # pop the last ReLU for the output layer
         self.net = nn.Sequential(*self.net)
+
+        D = nout // nin
+        self.comp_net = nn.Sequential(
+            dropout_layer,
+            nn.Linear(D, 10),
+            nn.LeakyReLU(),
+            dropout_layer,
+            nn.Linear(10, 10),
+            nn.LeakyReLU(),
+            dropout_layer,
+            nn.Linear(10, nout),
+        )
+
         self.net.apply(self.init_weights)
+        self.comp_net.apply(self.init_weights)
 
         # seeds for orders/connectivities of the model ensemble
         self.natural_ordering = natural_ordering
@@ -69,10 +91,14 @@ class MADE(nn.Module):
         # note, we could also precompute the masks and cache them, but this
         # could get memory expensive for large number of masks.
 
+        self.indp_var = 0
+
     def init_weights(self, m):
         if isinstance(m, nn.Linear):
             nn.init.xavier_normal_(m.weight, gain=1)
+            # nn.init.uniform_(m.bias)
             m.bias.data.fill_(self.bias_init)
+            # nn.init.normal(m.bias, 0, 1/np.sqrt(m.bias.shape[-1]))
 
     def update_masks(self, force_natural_ordering=False):
         if self.m and self.num_masks == 1 and self.natural_ordering: return
@@ -88,6 +114,7 @@ class MADE(nn.Module):
             self.m[-1] = np.arange(self.nin)
         else:
             self.m[-1] = rng.permutation(self.nin)
+            self.indp_var = np.argwhere(self.m[-1] == 0)[0][0]
 
         for l in range(L):
             self.m[l] = rng.randint(self.m[l-1].min(), self.nin-1, size=self.hidden_sizes[l])
@@ -109,8 +136,11 @@ class MADE(nn.Module):
 
     def forward(self, x):
         y = self.net(x.float())
-        return y
-
+        # pass the independent variable through more non-linearity to get more expressiveness
+        mask = torch.ones(y.shape, dtype=torch.bool)
+        mask[:, self.indp_var::self.nin] = False
+        out = y * mask + self.comp_net(y[:, self.indp_var::self.nin]) * (~mask)
+        return out
 
 
 if __name__ == '__main__':
