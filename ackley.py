@@ -4,6 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits import mplot3d
 
+from weight_compute import weight
+
 def ackley_func(x: Union[np.ndarray, numbers.Number]) -> np.ndarray:
     # visualize it for x.dim = 2
     a = 20
@@ -19,10 +21,7 @@ def ackley_func(x: Union[np.ndarray, numbers.Number]) -> np.ndarray:
 
     return y1 + y2 + y3
 
-def plot_ackley():
-
-    x1 = np.linspace(start=-5, stop=5, num=100)
-    x2 = np.linspace(start=-5, stop=5, num=100)
+def plot_ackley(x1, x2):
 
     x_mesh, y_mesh = np.meshgrid(x1, x2)
     xflat = x_mesh.flatten()
@@ -39,10 +38,7 @@ def plot_ackley():
     ax.set_ylabel('x2')
     ax.set_zlabel('value')
 
-def show_cutted_ackley(value):
-
-    x1 = np.linspace(start=-5, stop=5, num=100)
-    x2 = np.linspace(start=-5, stop=5, num=100)
+def show_cutted_ackley(x1, x2, value):
 
     x_mesh, y_mesh = np.meshgrid(x1, x2)
     xflat = x_mesh.flatten()
@@ -58,11 +54,30 @@ def show_cutted_ackley(value):
     im = plt.pcolormesh(x_mesh, y_mesh, z_mesh)
     fig.colorbar(im)
 
+def show_weight_on_all(x1, x2, value=4, value_avg=4, mode='le'):
+    x_mesh, y_mesh = np.meshgrid(x1, x2)
+    xflat = x_mesh.flatten()
+    yflat = y_mesh.flatten()
+
+    xin = np.stack([xflat, yflat], axis=-1)
+
+    yout = ackley_func(xin)
+    weights = weight(yout, value, value_avg, mode)
+    z_mesh = weights.reshape(x_mesh.shape)
+    fig = plt.figure()
+    im = plt.pcolormesh(x_mesh, y_mesh, z_mesh)
+    fig.colorbar(im)
 
 if __name__ == '__main__':
-    plot_ackley()
+    x1 = np.linspace(start=-5, stop=5, num=100)
+    x2 = np.linspace(start=-5, stop=5, num=100)
+
+    plot_ackley(x1, x2)
     plt.savefig(f'ref_figs/fn.png')
     plt.close()
-    show_cutted_ackley(value=4)
+    show_cutted_ackley(x1, x2, value=4)
     plt.savefig('ref_figs/goal.png')
+    plt.close()
+    show_weight_on_all(x1, x2, value=4, value_avg=4, mode='le')
+    plt.savefig('ref_figs/weights.png')
     plt.close()
