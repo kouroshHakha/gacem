@@ -16,6 +16,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
+import pdb
 
 from ackley import ackley_func
 from made import MADE
@@ -54,14 +55,13 @@ def plot_data(xdata, scatter_loc='', hist_loc='', ax=None):
     # plt.savefig(scatter_loc if scatter_loc else f'figs/test_model_ref_samples.png')
     # plt.close()
 
-    # if ax:
-    #     ax.hist2d(x, y, bins=100, cmap='binary', range=np.array([(-5, 5), (-5, 5)]))
-
-    # else:
-    plt.hist2d(x, y, bins=100, cmap='binary', range=np.array([(-5, 5), (-5, 5)]))
-    plt.colorbar()
-    plt.savefig(hist_loc if hist_loc else f'figs/test_model_ref_hist.png')
-    plt.close()
+    if ax:
+        ax.hist2d(x, y, bins=100, cmap='binary', range=np.array([(-5, 5), (-5, 5)]))
+    else:
+        plt.hist2d(x, y, bins=100, cmap='binary', range=np.array([(-5, 5), (-5, 5)]))
+        plt.colorbar()
+        plt.savefig(hist_loc if hist_loc else f'figs/test_model_ref_hist.png')
+        plt.close()
 
 
 class Learner:
@@ -221,7 +221,7 @@ if __name__ == '__main__':
         hidden_list=[20, 20, 20],
         nsample=50,
         batch_size=8,
-        nepoch=120,
+        nepoch=150,
         lr=0.0001,
     )
     learner.main()

@@ -53,16 +53,16 @@ def sample_data(nsample=100, goal=4):
 
 def plot_data(xdata, label=None, scatter_loc='', hist_loc='', ax=None):
     x, y = xdata[:, 0], xdata[:, 1]
-    if label is not None:
-        plt.scatter(x[label == 1], y[label == 1], color='r', label='in dist')
-        plt.scatter(x[label == -1], y[label == -1], color='b', label='out dist')
-        plt.legend()
-    else:
-        plt.scatter(x, y, color='r', label='in dist')
-    plt.xlim(-5, 5)
-    plt.ylim(-5, 5)
-    plt.savefig(scatter_loc if scatter_loc else f'ref_figs/test_model2_scatter_samples.png')
-    plt.close()
+    # if label is not None:
+    #     plt.scatter(x[label == 1], y[label == 1], color='r', label='in dist')
+    #     plt.scatter(x[label == -1], y[label == -1], color='b', label='out dist')
+    #     plt.legend()
+    # else:
+    #     plt.scatter(x, y, color='r', label='in dist')
+    # plt.xlim(-5, 5)
+    # plt.ylim(-5, 5)
+    # plt.savefig(scatter_loc if scatter_loc else f'ref_figs/test_model2_scatter_samples.png')
+    # plt.close()
 
     if ax:
         ax.hist2d(x, y, bins=100, cmap='binary', range=np.array([(-5, 5), (-5, 5)]))
@@ -161,7 +161,8 @@ class Learner:
             else:
                 neg_ll = (logp_vec * weights.abs() * neg_ind).sum(-1)
 
-            min_obj =  -pos_ll  + neg_ll
+            # min_obj =  -pos_ll  + neg_ll
+            min_obj =  -pos_ll
             # min_obj =  neg_ll
 
             if debug:
@@ -251,20 +252,19 @@ class Learner:
             print(f'epoch = {epoch_id}, te_nll = {te_loss}')
             tr_nll.append(tr_nll_per_b)
 
-            x1 = np.linspace(start=-5, stop=5, num=100)
-            x2 = np.linspace(start=-5, stop=5, num=100)
-            samples, _ = self.sample_model(self.nsample, x1, x2)
-            samples = samples.to(self.cpu).data.numpy()
-
+        #     x1 = np.linspace(start=-5, stop=5, num=100)
+        #     x2 = np.linspace(start=-5, stop=5, num=100)
+        #     samples, _ = self.sample_model(self.nsample, x1, x2)
+        #     samples = samples.to(self.cpu).data.numpy()
+        #
         #     ax = plt.subplot(5, 5, epoch_id + 1)
         #     plot_data(samples, scatter_loc='figs/test_model2_scatter.png',
         #               hist_loc='figs/test_model2_hist2D.png', ax=ax)
         #     plt.tight_layout()
         # plt.savefig('figs/test_model2_hist2D.png')
-        # plt.show()
-        # pdb.set_trace()
 
         self.plot_learning(tr_nll, te_nll)
+        # pdb.set_trace()
 
         x1 = np.linspace(start=-5, stop=5, num=100)
         x2 = np.linspace(start=-5, stop=5, num=100)
@@ -279,9 +279,9 @@ if __name__ == '__main__':
     # plot_data(arr[:, 0, :], label=weights)
     learner = Learner(
         hidden_list=[20, 20, 20],
-        nsample=50,
+        nsample=1000,
         batch_size=16,
-        nepoch=1000,
+        nepoch=40,
         lr=0.0001,
     )
-    learner.main(30)
+    learner.main()

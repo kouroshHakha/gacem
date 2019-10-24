@@ -54,7 +54,7 @@ class MADE(nn.Module):
         self.net = []
         hs = [nin] + hidden_sizes + [nout]
 
-        dropout_layer = nn.Dropout(0.8, inplace=True)
+        dropout_layer = nn.Dropout(0, inplace=True)
 
         for h0,h1 in zip(hs, hs[1:]):
             self.net += [
