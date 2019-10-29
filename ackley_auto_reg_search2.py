@@ -1,13 +1,9 @@
 """
+Second implementation.
 
-First implementation of the algorithm.
-Just directly maximizes E_{x\sim\mathcal{B}}[w(f(x), f^*, f_{avg}) \log p_{\theta}(x)]
-favg is the average of f over all samples, an unbiased estimator for  E_{x\sim B}[f(x)] where B
-also includes current distribution (i.e. p_{\theta} (x), implies that gradients should be taken
-through p_B(x), however we don't take this gradient in the code because of simplicity)
-
-It does not work in a sense that it over-fits to horizontal/vertical lines and in the end just
-selects a handful of samples in the center.
+This take into account the important sampling, and dependency of objective on theta.
+like how p_B(x) depends on \theta.
+We make buffer not include current distribution.
 """
 import numpy as np
 import torch
@@ -19,7 +15,7 @@ import pdb
 
 from ackley import ackley_func, show_weight_on_all
 from made import MADE
-from buffer import BufferNumpy
+from buffer import CacheBuffer
 from utils.pdb import register_pdb_hook
 
 register_pdb_hook()
@@ -41,6 +37,7 @@ class AutoReg2DSearch:
         self.nsamples = nsamples
         self.n_init_samples = n_init_samples
         self.cut_off = cut_off
+        self.beta = 0
 
         self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         self.cpu = torch.device('cpu')
@@ -75,9 +72,6 @@ class AutoReg2DSearch:
         xin_ind = xin_ind.to(self.device)
         probs = self.get_probs(xin)
 
-        # sum of entropies across x1 and across x2|x1
-        ent = - (probs * probs.log10()).sum(-1).sum(-1)
-
         D = self.dim
         N = xin.shape[0]
         batch_ind = np.stack([range(N)] * D, axis=-1)
@@ -92,37 +86,37 @@ class AutoReg2DSearch:
 
             eps_tens = torch.tensor(1e-15)
             prob_x = prob_in.prod(-1)
-            pos_ind = (weights > 0).float()
-            neg_ind = torch.tensor(1) - pos_ind
             logp_vec = (prob_x + eps_tens).log10()
+            pos_ind = (weights > 0).float()
+            # neg_ind = torch.tensor(1) - pos_ind
+            # npos = pos_ind.sum(-1)
 
+            ent_term = self.buffer.size * (self.beta * (torch.tensor(1) + logp_vec) * prob_x).data
+            obj_term  = - self.buffer.size * (weights * prob_x).data
+
+            coeff = (ent_term + obj_term) * pos_ind
+
+            # for w, e, o in zip(weights, ent_term, obj_term):
+            #     print(f'w={w:.2}, ent={e:.2}, obj={o:.2}')
+
+            min_obj_vec = coeff * logp_vec
+
+            # pdb.set_trace()
             npos = pos_ind.sum(-1)
-
-            # don't forget to (un)comment weights line in buffer.py
-            # prob_data = prob_x.data
-            prob_data = torch.tensor(1)
-
             if npos > 0:
-                pos_ll = (prob_data * logp_vec * weights.abs() * pos_ind).sum(-1) / npos
+                min_obj = min_obj_vec.sum(-1) / npos
             else:
-                pos_ll = (prob_data * logp_vec * weights.abs() * pos_ind).sum(-1)
-
-            nneg = neg_ind.sum(-1)
-
-            if nneg > 0:
-                neg_ll = (prob_data * logp_vec * weights.abs() * neg_ind).sum(-1) / nneg
-            else:
-                neg_ll = (prob_data * logp_vec * weights.abs() * neg_ind).sum(-1)
-
-
-            min_obj =  -pos_ll + neg_ll # - 0.2 * ent.mean(-1)
+                min_obj = min_obj_vec.sum(-1)
 
             if debug:
+                for w, p in zip(weights, prob_x):
+                    print(f'w = {w:10.4}, prob = {p:10.4}')
                 pdb.set_trace()
 
             if torch.isnan(min_obj):
                 print(min_obj)
                 pdb.set_trace()
+
             return min_obj
 
 
@@ -145,10 +139,10 @@ class AutoReg2DSearch:
             xi_ind = self.sample_probs(probs, i)  # ith x index
             xin_prob *= probs[:, i][range(nsamples), xi_ind]
             xin_ind[:, i] = xi_ind
-            xin[:, i] = torch.from_numpy(input_vectors[i][xi_ind])
+            xin[:, i] = torch.from_numpy(np.array(input_vectors[i][xi_ind]))
         return xin, xin_ind, xin_prob
 
-    def get_full_name(self, name, prefix, suffix):
+    def get_full_name(self, name, prefix='', suffix=''):
         if prefix:
             name = f'{prefix}_{name}'
         if suffix:
@@ -166,7 +160,7 @@ class AutoReg2DSearch:
         # if suffix:
         #     name = f'{name}_{suffix}'
         #
-        # plt.savefig(f'search_figs/{name}.png')
+        # plt.savefig(f'search_figs2/{name}.png')
         # plt.close()
         if ax is None:
             ax = plt.gca()
@@ -182,7 +176,7 @@ class AutoReg2DSearch:
         self.plt_hist2D(data, ax=ax)
         self.plt_weight_heatmap(ax=ax, alpha=0.5, cmap='viridis')
         name = self.get_full_name('samples', prefix, suffix)
-        plt.savefig(f'search_figs/{name}.png')
+        plt.savefig(f'search_figs2/{name}.png')
         plt.close()
 
 
@@ -195,6 +189,12 @@ class AutoReg2DSearch:
         nstep = N // B if mode == 'train' else 1
 
         nll_per_b = 0
+        #
+        # if mode == 'train':
+        #     xdb = torch.from_numpy(data)
+        #     wdb = torch.from_numpy(weights)
+        #     loss = self.get_nll(xdb[:, 0, :], xdb[:, 1, :].long(), weights=wdb, debug=True)
+
         for step in range(nstep):
             xb = data[step * B: step * B + B]
             wb = weights[step * B: step * B + B]
@@ -210,25 +210,36 @@ class AutoReg2DSearch:
                 self.opt.step()
             nll_per_b += loss.to(self.cpu).item() / nstep
 
+        # if mode == 'train':
+        #     loss = self.get_nll(xdb[:, 0, :], xdb[:, 1, :].long(), weights=wdb, debug=True)
+
         return nll_per_b
 
-    def train(self, n_samples, *input_vecs, iter_cnt: int):
-        xnew, xnew_ind, xnew_probs = self.sample_model(n_samples, *input_vecs)
-        xnew_np = xnew.to(self.cpu).data.numpy()
-        xnew_id_np = xnew_ind.to(self.cpu).data.numpy()
-        xnew_probs_np = xnew_probs.to(self.cpu).data.numpy()
+    def collect_samples(self, n_samples):
 
-        # simulate and compute the adjustment weights
-        fval = ackley_func(xnew_np)
-        self.buffer.add_samples(xnew_np, xnew_id_np, fval, xnew_probs_np)
+        n_collected = 0
+        while n_collected < n_samples:
+            xnew, xnew_ind, xnew_probs = self.sample_model(1, *self.input_vectors)
+            xnew_np = xnew.to(self.cpu).data.numpy()
+            xnew_id_np = xnew_ind.to(self.cpu).data.numpy()
+            xnew_probs_np = xnew_probs.to(self.cpu).data.numpy()
+
+            # simulate and compute the adjustment weights
+            fval = ackley_func(xnew_np)
+
+            if xnew_np not in self.buffer:
+                self.buffer.add_samples(xnew_np, xnew_id_np, fval)
+                n_collected += 1
+            else:
+                print(f'item {xnew_np} already exists!')
 
 
+    def train(self, iter_cnt: int):
         # treat the sampled data as a static data set and take some gradient steps on it
         xtr, xte, wtr, wte = self.buffer.draw_tr_te_ds()
-
         # plotting
         self.viz(xtr[:,0, :], 'training', f'{iter_cnt}_before')
-
+        self.viz(xte[:,0, :], 'test', f'{iter_cnt}_before')
         # per epoch
         print('-'*50)
         for epoch_id in range(self.nepochs):
@@ -261,33 +272,28 @@ class AutoReg2DSearch:
 
         self.opt = optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=0)
 
-        self.buffer = BufferNumpy(mode=self.mode, goal=self.goal, cut_off=self.cut_off)
+        self.buffer = CacheBuffer(self.mode, self.goal, self.cut_off)
 
-        self.train(self.n_init_samples, x1_sp, x2_sp, iter_cnt=0)
+        self.collect_samples(self.n_init_samples)
+        self.train(0)
+        self.model.eval()
         xdata, _, probs = self.sample_model(2000, x1_sp, x2_sp)
 
         self.plt_hist2D(xdata.to(self.cpu).data.numpy())
         name = self.get_full_name('dist', prefix='training', suffix='0_after')
-        plt.savefig(f'search_figs/{name}.png')
+        plt.savefig(f'search_figs2/{name}.png')
         plt.close()
-
         # pdb.set_trace()
+
         for iter_cnt in range(self.niter):
-            self.train(self.nsamples, x1_sp, x2_sp, iter_cnt=iter_cnt + 1)
-            self.model.eval()
+            self.collect_samples(self.nsamples)
+            self.train(iter_cnt + 1)
             xdata, _, _ = self.sample_model(2000, x1_sp, x2_sp)
             self.plt_hist2D(xdata.to(self.cpu).data.numpy())
             name = self.get_full_name('dist', prefix='training', suffix=f'{iter_cnt+1}_after')
-            plt.savefig(f'search_figs/{name}.png')
+            plt.savefig(f'search_figs2/{name}.png')
             plt.close()
-
-
-            self.plt_hist2D(self.buffer.data_arr)
-            name = self.get_full_name('buffer_dist', prefix='training',
-                                      suffix=f'{iter_cnt+1}_after')
-            plt.savefig(f'search_figs/{name}.png')
-            plt.close()
-            # pdb.set_trace()
+            pdb.set_trace()
 
             # if iter_cnt % (self.viz_rate - 1) == 0:
             #     # print evaluation
@@ -304,10 +310,10 @@ if __name__ == '__main__':
         mode='le',
         batch_size=8,
         nepochs=1,
-        nsamples=20,
+        nsamples=5,
         n_init_samples=20,
         cut_off=20,
-        niter=10,
-        lr=0.003,
+        niter=50,
+        lr=0.01,
     )
     searcher.main(10)

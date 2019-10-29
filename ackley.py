@@ -54,7 +54,11 @@ def show_cutted_ackley(x1, x2, value):
     im = plt.pcolormesh(x_mesh, y_mesh, z_mesh)
     fig.colorbar(im)
 
-def show_weight_on_all(x1, x2, value=4, value_avg=4, mode='le'):
+def show_weight_on_all(x1, x2, value=4, value_avg=4, mode='le', ax=None, **kwargs):
+
+    if ax is None:
+        ax = plt.gca()
+
     x_mesh, y_mesh = np.meshgrid(x1, x2)
     xflat = x_mesh.flatten()
     yflat = y_mesh.flatten()
@@ -64,9 +68,9 @@ def show_weight_on_all(x1, x2, value=4, value_avg=4, mode='le'):
     yout = ackley_func(xin)
     weights = weight(yout, value, value_avg, mode)
     z_mesh = weights.reshape(x_mesh.shape)
-    fig = plt.figure()
-    im = plt.pcolormesh(x_mesh, y_mesh, z_mesh)
-    fig.colorbar(im)
+    im = ax.pcolormesh(x_mesh, y_mesh, z_mesh, **kwargs)
+    plt.colorbar(im, ax=ax)
+    return ax
 
 if __name__ == '__main__':
     x1 = np.linspace(start=-5, stop=5, num=100)
@@ -75,9 +79,9 @@ if __name__ == '__main__':
     plot_ackley(x1, x2)
     plt.savefig(f'ref_figs/fn.png')
     plt.close()
-    show_cutted_ackley(x1, x2, value=4)
+    show_cutted_ackley(x1, x2, value=3)
     plt.savefig('ref_figs/goal.png')
     plt.close()
-    show_weight_on_all(x1, x2, value=4, value_avg=4, mode='le')
+    show_weight_on_all(x1, x2, value=3, value_avg=4, mode='le')
     plt.savefig('ref_figs/weights.png')
     plt.close()

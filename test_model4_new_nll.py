@@ -61,7 +61,7 @@ def plot_data(xdata, label=None, scatter_loc='', hist_loc='', ax=None):
     #     plt.scatter(x, y, color='r', label='in dist')
     # plt.xlim(-5, 5)
     # plt.ylim(-5, 5)
-    # plt.savefig(scatter_loc if scatter_loc else f'ref_figs/test_model2_scatter_samples.png')
+    # plt.savefig(scatter_loc if scatter_loc else f'ref_figs/test_model_4_scatter_samples.png')
     # plt.close()
 
     if ax:
@@ -74,7 +74,7 @@ def plot_data(xdata, label=None, scatter_loc='', hist_loc='', ax=None):
             plt.hist2d(x, y, bins=100, cmap='binary', range=np.array([(-5, 5), (-5, 5)]))
 
         plt.colorbar()
-        plt.savefig(hist_loc if hist_loc else f'ref_figs/test_model2_hist2D_samples.png')
+        plt.savefig(hist_loc if hist_loc else f'ref_figs/test_model_4_hist2D_samples.png')
         plt.close()
 
 
@@ -87,6 +87,7 @@ class Learner:
         self.hiddens = hidden_list
         self.nepoch = nepoch
         self.lr = lr
+        self.beta = 0
 
 
         self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
@@ -128,42 +129,21 @@ class Learner:
             weighted_nll = nll_samples.mean(dim=-1)
             return weighted_nll
         else:
-            # multiply each nll by the corresponding weight and take the mean
-            # prob_x = prob_in.prod(-1)
-            # pos_ind = (weights > 0)
-            # neg_ind = ~pos_ind
-            # prob_obs = prob_x ** pos_ind.float()
-            # prob_obs_b = (torch.tensor(1) - prob_x) ** neg_ind.float()
-            # pos_obj = (prob_obs.log2() * weights.abs()).sum(-1) / pos_ind.sum(-1)
-            # neg_obj = (prob_obs_b.log2() * weights.abs()).sum(-1) / neg_ind.sum(-1)
-            # ll = pos_obj + neg_obj
-            # nll = -ll
-            #
-            # return nll
 
             eps_tens = torch.tensor(1e-15)
             prob_x = prob_in.prod(-1)
-            pos_ind = (weights > 0).float()
-            neg_ind = torch.tensor(1) - pos_ind
             logp_vec = (prob_x + eps_tens).log10()
+            pos_ind = (weights > 0).float()
+
+            coeff = ((self.beta * (torch.tensor(1) + logp_vec) - weights) * pos_ind).data
+
+            min_obj_vec = coeff * logp_vec
 
             npos = pos_ind.sum(-1)
-
             if npos > 0:
-                pos_ll = (logp_vec * weights.abs() * pos_ind).sum(-1) / npos
+                min_obj = min_obj_vec.sum(-1) / npos
             else:
-                pos_ll = (logp_vec * weights.abs() * pos_ind).sum(-1)
-
-            nneg = neg_ind.sum(-1)
-
-            if nneg > 0:
-                neg_ll = (logp_vec * weights.abs() * neg_ind).sum(-1) / nneg
-            else:
-                neg_ll = (logp_vec * weights.abs() * neg_ind).sum(-1)
-
-            # min_obj =  -pos_ll  + neg_ll
-            min_obj =  -pos_ll
-            # min_obj =  neg_ll
+                min_obj = min_obj_vec.sum(-1)
 
             if debug:
                 pdb.set_trace()
@@ -171,6 +151,7 @@ class Learner:
             if torch.isnan(min_obj):
                 print(min_obj)
                 pdb.set_trace()
+
             return min_obj
 
     def sample_probs(self, probs: torch.Tensor, index: int):
@@ -200,7 +181,7 @@ class Learner:
         plt.legend()
         plt.xlabel('nepoch')
         plt.ylabel('negative likelihood')
-        plt.savefig('figs/test_model2_learning_curve.png')
+        plt.savefig('figs/test_model_4_learning_curve.png')
         plt.close()
 
     def main(self, seed=10):
@@ -258,10 +239,10 @@ class Learner:
         #     samples = samples.to(self.cpu).data.numpy()
         #
         #     ax = plt.subplot(5, 5, epoch_id + 1)
-        #     plot_data(samples, scatter_loc='figs/test_model2_scatter.png',
-        #               hist_loc='figs/test_model2_hist2D.png', ax=ax)
+        #     plot_data(samples, scatter_loc='figs/test_model_4_scatter.png',
+        #               hist_loc='figs/test_model_4_hist2D.png', ax=ax)
         #     plt.tight_layout()
-        # plt.savefig('figs/test_model2_hist2D.png')
+        # plt.savefig('figs/test_model_4_hist2D.png')
 
         self.plot_learning(tr_nll, te_nll)
         # pdb.set_trace()
@@ -270,8 +251,8 @@ class Learner:
         x2 = np.linspace(start=-5, stop=5, num=100)
         samples, _ = self.sample_model(10000, x1, x2)
         samples = samples.to(self.cpu).data.numpy()
-        plot_data(samples, scatter_loc='figs/test_model2_scatter.png',
-                  hist_loc='figs/test_model2_hist2D.png')
+        plot_data(samples, scatter_loc='figs/test_model_4_scatter.png',
+                  hist_loc='figs/test_model_4_hist2D.png')
 
 
 if __name__ == '__main__':
@@ -281,7 +262,7 @@ if __name__ == '__main__':
         hidden_list=[20, 20, 20],
         nsample=10000,
         batch_size=256,
-        nepoch=100,
+        nepoch=40,
         lr=0.0001,
     )
     learner.main()
