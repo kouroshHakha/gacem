@@ -23,7 +23,7 @@ register_pdb_hook()
 class AutoReg2DSearch:
 
     def __init__(self, goal_value, hidden_list, mode='le', batch_size=16, cut_off=20,
-                 nepochs=1, nsamples=1, n_init_samples=100, niter=1000, lr=1e-3):
+                 nepochs=1, nsamples=1, n_init_samples=100, niter=1000, lr=1e-3, beta=0):
 
         self.dim = 2
         self.bsize = batch_size
@@ -37,7 +37,7 @@ class AutoReg2DSearch:
         self.nsamples = nsamples
         self.n_init_samples = n_init_samples
         self.cut_off = cut_off
-        self.beta = 0
+        self.beta = beta
 
         self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         self.cpu = torch.device('cpu')
@@ -293,7 +293,7 @@ class AutoReg2DSearch:
             name = self.get_full_name('dist', prefix='training', suffix=f'{iter_cnt+1}_after')
             plt.savefig(f'search_figs2/{name}.png')
             plt.close()
-            pdb.set_trace()
+            # pdb.set_trace()
 
             # if iter_cnt % (self.viz_rate - 1) == 0:
             #     # print evaluation
@@ -315,5 +315,6 @@ if __name__ == '__main__':
         cut_off=20,
         niter=50,
         lr=0.01,
+        beta=2,
     )
-    searcher.main(10)
+    searcher.main(20)
