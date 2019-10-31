@@ -58,7 +58,7 @@ class MADE(nn.Module):
 
         for h0,h1 in zip(hs, hs[1:]):
             self.net += [
-                # nn.BatchNorm1d(h0),
+                nn.BatchNorm1d(h0),
                 dropout_layer,
                 MaskedLinear(h0, h1),
                 nn.LeakyReLU()

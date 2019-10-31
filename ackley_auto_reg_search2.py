@@ -315,6 +315,6 @@ if __name__ == '__main__':
         cut_off=20,
         niter=50,
         lr=0.01,
-        beta=2,
+        beta=6,
     )
     searcher.main(20)

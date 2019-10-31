@@ -219,9 +219,9 @@ if __name__ == '__main__':
     # plot_data(arr[:, 0, :])
     learner = Learner(
         hidden_list=[20, 20, 20],
-        nsample=50,
-        batch_size=8,
-        nepoch=150,
+        nsample=1000,
+        batch_size=256,
+        nepoch=1000,
         lr=0.0001,
     )
     learner.main()
