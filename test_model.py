@@ -218,10 +218,10 @@ if __name__ == '__main__':
     # arr = sample_data(1000)
     # plot_data(arr[:, 0, :])
     learner = Learner(
-        hidden_list=[20, 20, 20],
-        nsample=1000,
-        batch_size=256,
-        nepoch=1000,
+        hidden_list=[40, 40, 40, 40, 40],
+        nsample=50,
+        batch_size=8,
+        nepoch=200,
         lr=0.0001,
     )
     learner.main()

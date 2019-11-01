@@ -58,23 +58,21 @@ class MADE(nn.Module):
 
         for h0,h1 in zip(hs, hs[1:]):
             self.net += [
-                nn.BatchNorm1d(h0),
-                dropout_layer,
+                # nn.BatchNorm1d(h0),
                 MaskedLinear(h0, h1),
-                nn.LeakyReLU()
+                nn.LeakyReLU(),
+                dropout_layer,
             ]
+        self.net.pop() # pop the last dropout
         self.net.pop() # pop the last ReLU for the output layer
         self.net = nn.Sequential(*self.net)
 
         D = nout // nin
         self.comp_net = nn.Sequential(
-            dropout_layer,
             nn.Linear(D, 10),
             nn.LeakyReLU(),
-            dropout_layer,
             nn.Linear(10, 10),
             nn.LeakyReLU(),
-            dropout_layer,
             nn.Linear(10, nout),
         )
 
@@ -158,7 +156,7 @@ if __name__ == '__main__':
         # (D, [200, 220], D, True),          # natural ordering test
         # (D, [200, 220], 2*D, True),       # test nout > nin
         # (D, [20, 20], 200*D, True),       # test nout > nin
-        (D, [20, 20], 15*D, True)
+        (D, [20, 20, 20], 300*D, True)
     ]
 
     for nin, hiddens, nout, natural_ordering in configs:
@@ -172,7 +170,7 @@ if __name__ == '__main__':
         for k in range(nout):
             xtr = torch.from_numpy(x)
             xtr.requires_grad_(True)
-            model.eval()
+            model.train()
             xtrhat = model(xtr)
             loss = xtrhat[0,k]
             loss.backward()

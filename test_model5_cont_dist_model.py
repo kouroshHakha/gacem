@@ -113,7 +113,6 @@ class Learner:
         """Given an input tensor (N, D) computes the probabilities across the cardinality space
         of each dimension. prob.shape = (N, D, K) where K is number of possible values for each
         dimension. Assume that xin is normalized to [-1,1], and delta is given."""
-        self.model.eval()
         xin = xin.to(self.device)
         xhat = self.model(xin)
         D = self.dim
@@ -152,6 +151,7 @@ class Learner:
         r_cond = xb >= (1 - delta / 2)
         n_cond = ~(l_cond | r_cond)
         cdfs = probs_left_edge * l_cond +  probs_right_edge * r_cond + probs_nonedge * n_cond
+
         probs = (coeffs * cdfs).sum(-1) / coeffs.sum(-1)
 
         if debug:
@@ -207,7 +207,6 @@ class Learner:
                     xin[:, :i] = torch.stack([xsample.squeeze()] * N)
                 xin[:, i] = torch.from_numpy(input_vec_norm[i])
                 probs = self.get_probs(xin, delta)
-                pdb.set_trace()
                 xi_ind = self.sample_probs(probs, i)  # ith x index
                 xsample[0, i] = torch.tensor(input_vec_norm[i][xi_ind])
                 xsample_ind[0, i] = xi_ind
@@ -246,6 +245,7 @@ class Learner:
         N, D, _ = xtr.shape
         # per epoch
         tr_nll, te_nll = [], []
+        plt.figure(figsize=(15, 8))
         for epoch_id in range(self.nepoch):
             nstep = N // B
             # per batch
@@ -261,7 +261,7 @@ class Learner:
                 self.opt.zero_grad()
                 loss.backward()
                 self.opt.step()
-                self.lr_sch.step()
+                self.lr_sch.step(epoch_id)
 
                 tr_nll_per_b += loss.to(self.cpu).item() / nstep
 
@@ -276,17 +276,17 @@ class Learner:
             print(f'epoch = {epoch_id}, te_nll = {te_loss}')
             tr_nll.append(tr_nll_per_b)
 
-        #     if epoch_id >= 25:
-        #         x1 = np.linspace(start=-5, stop=5, num=100)
-        #         x2 = np.linspace(start=-5, stop=5, num=100)
-        #         _, samples_ind = self.sample_model(100, delta)
-        #         samples_ind = samples_ind.to(self.cpu).data.numpy().astype('int')
-        #
-        #         ax = plt.subplot(5, 5, (epoch_id) % 25 + 1)
-        #         self.plot_data(samples_ind, scatter_loc='figs/test_model_5_sub_scatter.png',
-        #                        hist_loc='figs/test_model_5_sub_hist2D.png', ax=ax)
-        #         plt.tight_layout()
-        # plt.savefig('figs/test_model_5_sub_hist2D.png')
+            if (epoch_id + 1) % 20 == 0 and epoch_id <= 100:
+                x1 = np.linspace(start=-5, stop=5, num=100)
+                x2 = np.linspace(start=-5, stop=5, num=100)
+                _, samples_ind = self.sample_model(1, delta)
+                samples_ind = samples_ind.to(self.cpu).data.numpy().astype('int')
+
+                ax = plt.subplot(1, 5, epoch_id // 20 + 1, adjustable='box', aspect=1)
+                self.plot_data(samples_ind, scatter_loc='figs/test_model_5_sub_scatter.png',
+                               hist_loc='figs/test_model_5_sub_hist2D.png', ax=ax)
+                plt.tight_layout()
+        plt.savefig('figs/test_model_5_sub_hist2D.png')
 
         self.plot_learning(tr_nll, te_nll)
         # pdb.set_trace()
@@ -304,11 +304,11 @@ if __name__ == '__main__':
     # plot_data(arr[:, 0, :], label=weights)
     learner = Learner(
         hidden_list=[20, 20, 20],
-        nsample=1000,
-        batch_size=256,
-        nepoch=100,
-        lr=0.01,
+        nsample=50,
+        batch_size=16,
+        nepoch=40,
+        lr=0.001,
         base_fn='normal',
-        nr_mix=5
+        nr_mix=100,
     )
     learner.main()
