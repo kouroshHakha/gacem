@@ -104,6 +104,12 @@ class CacheElement:
     def __eq__(self, other):
         return hash(self) == hash(other)
 
+    def __str__(self):
+        return str(self._item)
+
+    def __repr__(self):
+        return repr(self._item)
+
 
 class CacheBuffer:
 
@@ -153,11 +159,14 @@ class CacheBuffer:
         for el in self.db_set:
             data = np.stack([el.item, el.item_ind], axis=0)
             data_list.append(data)
-        return np.stack(data_list, axis=0)
+        return np.stack(data_list, axis=0).astype('float32')
 
-    def draw_tr_te_ds(self, split=0.8):
+    def draw_tr_te_ds(self, split=0.8, only_positive = False):
         data = self._get_all_data()
         weights = self._weights()
+        if only_positive:
+            data = data[weights > 0]
+            weights = weights[weights > 0]
         ret = split_data(data, weights, split)
         return ret
 

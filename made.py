@@ -30,7 +30,7 @@ class MaskedLinear(nn.Linear):
 
 class MADE(nn.Module):
     def __init__(self, nin, hidden_sizes, nout, num_masks=1, natural_ordering=False, seed=0,
-                 bias_init = 0.01):
+                 bias_init = 0.1):
         """
         nin: integer; number of inputs
         hidden sizes: a list of integers; number of units in hidden layers
@@ -54,16 +54,16 @@ class MADE(nn.Module):
         self.net = []
         hs = [nin] + hidden_sizes + [nout]
 
-        dropout_layer = nn.Dropout(0, inplace=True)
+        # dropout_layer = nn.Dropout(0, inplace=True)
 
         for h0,h1 in zip(hs, hs[1:]):
             self.net += [
                 # nn.BatchNorm1d(h0),
                 MaskedLinear(h0, h1),
                 nn.LeakyReLU(),
-                dropout_layer,
+                # dropout_layer,
             ]
-        self.net.pop() # pop the last dropout
+        # self.net.pop() # pop the last dropout
         self.net.pop() # pop the last ReLU for the output layer
         self.net = nn.Sequential(*self.net)
 
@@ -94,8 +94,8 @@ class MADE(nn.Module):
     def init_weights(self, m):
         if isinstance(m, nn.Linear):
             nn.init.xavier_normal_(m.weight, gain=1)
-            # nn.init.uniform_(m.bias)
-            m.bias.data.fill_(self.bias_init)
+            nn.init.uniform_(m.bias, a=-self.bias_init, b=self.bias_init)
+            # m.bias.data.fill_(self.bias_init)
             # nn.init.normal(m.bias, 0, 1/np.sqrt(m.bias.shape[-1]))
 
     def update_masks(self, force_natural_ordering=False):

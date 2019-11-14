@@ -118,6 +118,7 @@ class Learner:
         D = self.dim
         log_coeffs = torch.stack([xhat[:, i::D*3] for i in range(D)], dim=1)
         coeffs = log_coeffs.exp()
+
         xb = xin[..., None] + torch.zeros(coeffs.shape)
 
         if self.base_fn in ['logistic', 'normal']:
@@ -132,10 +133,13 @@ class Learner:
                 plus_cdf = self.cdf_normal(xb + delta / 2, means, sigma)
                 minus_cdf = self.cdf_normal(xb - delta / 2, means, sigma)
         elif self.base_fn == 'uniform':
-            a = torch.stack([xhat[:, i+D::D*3] for i in range(D)], dim=1)
+            center = torch.stack([xhat[:, i+D::D*3] for i in range(D)], dim=1)
+            # normalize center between [-1,1] to cover all the space
+            center = 2 * (center - center.min()) / (center.max() - center.min()) - 1
             log_delta = torch.stack([xhat[:, i+2*D::D*3] for i in range(D)], dim=1)
             bdelta = log_delta.exp()
-            b = a + bdelta
+            a = center - bdelta / 2
+            b = center + bdelta / 2
             plus_cdf = self.cdf_uniform(xb + delta / 2, a, b)
             minus_cdf = self.cdf_uniform(xb - delta / 2, a, b)
         else:
@@ -154,7 +158,7 @@ class Learner:
 
         probs = (coeffs * cdfs).sum(-1) / coeffs.sum(-1)
 
-        if debug:
+        if debug or torch.isnan(probs.min()):
             pdb.set_trace()
 
         return probs
@@ -166,7 +170,7 @@ class Learner:
         prob_x = probs.prod(-1)
 
         eps_tens = torch.tensor(1e-15)
-        min_obj = -(prob_x + eps_tens).log2().mean(-1)
+        min_obj = -(prob_x + eps_tens).log10().mean(-1)
 
         if debug:
             pdb.set_trace()
@@ -245,7 +249,14 @@ class Learner:
         N, D, _ = xtr.shape
         # per epoch
         tr_nll, te_nll = [], []
+
+        # _, samples_ind = self.sample_model(4000, delta)
+        # samples_ind = samples_ind.to(self.cpu).data.numpy().astype('int')
+        # self.plot_data(samples_ind, scatter_loc='figs/test_model_5_scatter.png',
+        #                hist_loc='figs/test_model_5_init_hist2D.png')
+        # return
         plt.figure(figsize=(15, 8))
+        i = 0
         for epoch_id in range(self.nepoch):
             nstep = N // B
             # per batch
@@ -256,7 +267,6 @@ class Learner:
                 xb_tens = torch.from_numpy(xb).to(self.device)
 
                 xin = xb_tens[:, 0, :]
-                xin_ind = xb_tens[:, 1, :].long()
                 loss = self.get_nll(xin, delta, debug=False)
                 self.opt.zero_grad()
                 loss.backward()
@@ -268,7 +278,6 @@ class Learner:
             self.model.eval()
             xte_tens = torch.from_numpy(xte).to(self.device)
             xin_te = xte_tens[:, 0, :]
-            xin_ind_te = xte_tens[:, 1, :].long()
             te_loss = self.get_nll(xin_te, delta)
             te_nll.append(te_loss)
 
@@ -276,24 +285,21 @@ class Learner:
             print(f'epoch = {epoch_id}, te_nll = {te_loss}')
             tr_nll.append(tr_nll_per_b)
 
-            if (epoch_id + 1) % 20 == 0 and epoch_id <= 100:
-                x1 = np.linspace(start=-5, stop=5, num=100)
-                x2 = np.linspace(start=-5, stop=5, num=100)
-                _, samples_ind = self.sample_model(1, delta)
+            if (epoch_id + 1) % 20 == 0 and 200 <=epoch_id <= 300:
+                _, samples_ind = self.sample_model(1000, delta)
                 samples_ind = samples_ind.to(self.cpu).data.numpy().astype('int')
 
-                ax = plt.subplot(1, 5, epoch_id // 20 + 1, adjustable='box', aspect=1)
+                ax = plt.subplot(1, 5, i + 1, adjustable='box', aspect=1)
                 self.plot_data(samples_ind, scatter_loc='figs/test_model_5_sub_scatter.png',
                                hist_loc='figs/test_model_5_sub_hist2D.png', ax=ax)
                 plt.tight_layout()
+                i += 1
         plt.savefig('figs/test_model_5_sub_hist2D.png')
 
         self.plot_learning(tr_nll, te_nll)
         # pdb.set_trace()
 
-        x1 = np.linspace(start=-5, stop=5, num=100)
-        x2 = np.linspace(start=-5, stop=5, num=100)
-        samples, samples_ind = self.sample_model(1000, delta)
+        _, samples_ind = self.sample_model(1000, delta)
         samples_ind = samples_ind.to(self.cpu).data.numpy().astype('int')
         self.plot_data(samples_ind, scatter_loc='figs/test_model_5_scatter.png',
                   hist_loc='figs/test_model_5_hist2D.png')
@@ -304,11 +310,11 @@ if __name__ == '__main__':
     # plot_data(arr[:, 0, :], label=weights)
     learner = Learner(
         hidden_list=[20, 20, 20],
-        nsample=50,
-        batch_size=16,
-        nepoch=40,
+        nsample=1000,
+        batch_size=128,
+        nepoch=100,
         lr=0.001,
-        base_fn='normal',
+        base_fn='uniform',
         nr_mix=100,
     )
-    learner.main()
+    learner.main(20)
