@@ -23,7 +23,6 @@ from ackley import ackley_func, show_weight_on_all
 from made import MADE
 from buffer import CacheBuffer
 from utils.pdb import register_pdb_hook
-from utils.pytorch import plot_grad_flow
 
 
 register_pdb_hook()
@@ -32,11 +31,12 @@ class AutoReg2DSearch:
 
     def __init__(self, goal_value, hidden_list, mode='le', batch_size=16, cut_off=20,
                  nepochs=1, nsamples=1, n_init_samples=100, niter=1000, lr=1e-3, beta: float = 0,
-                 init_nepochs=1, base_fn='logistic', nr_mix=1, only_positive=False):
+                 init_nepochs=1, base_fn='logistic', nr_mix=1, only_positive=False,
+                 full_training_last=False):
 
         l_args, _, _, values = inspect.getargvalues(inspect.currentframe())
         params = dict(zip(l_args, [values[i] for i in l_args]))
-        self.unique_name = time.strftime('%Y%H%M%S')
+        self.unique_name = time.strftime('%Y%m%d%H%M%S')
         self.dir = Path(f'data/search_fig_{self.unique_name}')
         self.dir.mkdir(parents=True, exist_ok=True)
         with open(self.dir / 'params.yaml', 'w') as f:
@@ -59,6 +59,8 @@ class AutoReg2DSearch:
         self.nr_mix = nr_mix
         self.base_fn = base_fn
         self.only_pos = only_positive
+        # whether to run 1000 epochs of training for the later round of iteration
+        self.full_training = full_training_last
 
 
         self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
@@ -145,6 +147,8 @@ class AutoReg2DSearch:
             log_sigma = torch.stack([xhat[:, i+2*D::D*3] for i in range(D)], dim=1)
             # put a cap on the value of output so that it does not blow up
             log_sigma = torch.min(log_sigma, torch.ones(log_sigma.shape) * 50)
+            # put a bottom on the value of output so that it does not blow up
+            log_sigma = torch.max(log_sigma, torch.ones(log_sigma.shape) * (-40))
             sigma = log_sigma.exp()
 
             if self.base_fn == 'logistic':
@@ -486,7 +490,11 @@ class AutoReg2DSearch:
         tr_losses = []
         for iter_cnt in range(self.niter):
             self.collect_samples(self.nsamples)
-            tr_loss, tr_loss_list = self.train(iter_cnt + 1, self.nepochs)
+            if iter_cnt == self.niter - 1 and self.full_training:
+                tr_loss, tr_loss_list = self.train(iter_cnt + 1, 1000)
+            else:
+                tr_loss, tr_loss_list = self.train(iter_cnt + 1, self.nepochs)
+
             tr_losses.append(tr_loss_list)
 
 
@@ -515,8 +523,9 @@ if __name__ == '__main__':
         niter=100,
         lr=0.0005,
         beta=0.5,
-        base_fn='uniform',
+        base_fn='normal',
         nr_mix=100,
-        only_positive=True
+        only_positive=False,
+        full_training_last=True
     )
     searcher.main(10)
