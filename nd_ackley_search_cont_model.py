@@ -592,7 +592,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     searcher = AutoReg2DSearch(
-        ndim=3,
+        ndim=10,
         goal_value=4,
         hidden_list=[20, 20, 20],
         mode='le',
@@ -602,15 +602,15 @@ if __name__ == '__main__':
         n_init_samples=20,
         init_nepochs=50,
         cut_off=20,
-        niter=100,
+        niter=500,
         lr=0.0005,
-        beta=0.1,
+        beta=1,
         base_fn='normal',
-        nr_mix=100,
+        nr_mix=10,
         only_positive=False,
         full_training_last=True,
         load_ckpt_path=args.ckpt,
         input_scale=5.0,
     )
     searcher.main(args.seed)
-    searcher.check_solutions(ntimes=10, nsamples=1000, init_seed=args.seed)
+    searcher.check_solutions(ntimes=10, nsamples=100, init_seed=args.seed)
