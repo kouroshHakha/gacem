@@ -377,8 +377,9 @@ class AutoReg2DSearch:
     def train(self, iter_cnt: int, nepochs: int, split=1.0):
         # treat the sampled data as a static data set and take some gradient steps on it
         xtr, xte, wtr, wte = self.buffer.draw_tr_te_ds(split=split)
-        self.plt_hist2D(xtr[:, 1, :].astype('int'),
-                        name='dist', prefix='training', suffix=f'{iter_cnt}_before')
+        if self.ndim == 2:
+            self.plt_hist2D(xtr[:, 1, :].astype('int'),
+                            name='dist', prefix='training', suffix=f'{iter_cnt}_before')
         # per epoch
         print('-'*50)
         tr_loss = 0
@@ -465,9 +466,10 @@ class AutoReg2DSearch:
             self.model.train()
             self.train(0, self.n_init_samples)
 
-            _, xdata_ind = self.sample_model(1000)
-            self.plt_hist2D(xdata_ind.to(self.cpu).data.numpy().astype('int'),
-                            name='dist', prefix='training', suffix=f'0_after')
+            if self.ndim == 2:
+                _, xdata_ind = self.sample_model(1000)
+                self.plt_hist2D(xdata_ind.to(self.cpu).data.numpy().astype('int'),
+                                name='dist', prefix='training', suffix=f'0_after')
             items = (0, [], [])
             self.save_checkpoint(*items)
         return items
@@ -490,7 +492,7 @@ class AutoReg2DSearch:
                 tr_loss, tr_loss_list = self.train(iter_cnt + 1, self.nepochs)
 
             tr_losses.append(tr_loss_list)
-            if (iter_cnt + 1) % 10 == 0:
+            if (iter_cnt + 1) % 10 == 0 and self.ndim == 2:
                 _, xdata_ind = self.sample_model(1000)
                 self.plt_hist2D(xdata_ind.to(self.cpu).data.numpy().astype('int'),
                                 name='dist', prefix='training', suffix=f'{iter_cnt+1}_after')
@@ -549,8 +551,9 @@ class AutoReg2DSearch:
     def report_accuracy(self, ntimes, nsamples):
         accuracy_list, times = [], []
 
-        _, sample_ids, _ = self._sample_model_for_eval(nsamples)
-        self.plt_hist2D(sample_ids.to(self.cpu).data.numpy().astype('int'))
+        if self.ndim == 2:
+            _, sample_ids, _ = self._sample_model_for_eval(nsamples)
+            self.plt_hist2D(sample_ids.to(self.cpu).data.numpy().astype('int'))
 
         for iter_id in range(ntimes):
             s = time.time()
@@ -589,7 +592,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     searcher = AutoReg2DSearch(
-        ndim=2,
+        ndim=3,
         goal_value=4,
         hidden_list=[20, 20, 20],
         mode='le',
