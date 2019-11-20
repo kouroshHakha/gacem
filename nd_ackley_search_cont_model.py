@@ -465,7 +465,7 @@ class AutoReg2DSearch:
             self.model.train()
             self.train(0, self.n_init_samples)
 
-            _, xdata_ind = self.sample_model(4000)
+            _, xdata_ind = self.sample_model(1000)
             self.plt_hist2D(xdata_ind.to(self.cpu).data.numpy().astype('int'),
                             name='dist', prefix='training', suffix=f'0_after')
             items = (0, [], [])
@@ -490,12 +490,12 @@ class AutoReg2DSearch:
                 tr_loss, tr_loss_list = self.train(iter_cnt + 1, self.nepochs)
 
             tr_losses.append(tr_loss_list)
-            self.save_checkpoint(iter_cnt, tr_losses, avg_cost)
             if (iter_cnt + 1) % 10 == 0:
-                _, xdata_ind = self.sample_model(4000)
+                _, xdata_ind = self.sample_model(1000)
                 self.plt_hist2D(xdata_ind.to(self.cpu).data.numpy().astype('int'),
                                 name='dist', prefix='training', suffix=f'{iter_cnt+1}_after')
             iter_cnt += 1
+            self.save_checkpoint(iter_cnt, tr_losses, avg_cost)
 
         self.plot_learning_with_epochs(training=tr_losses)
         self.plot_cost(avg_cost)
@@ -601,7 +601,7 @@ if __name__ == '__main__':
         cut_off=20,
         niter=100,
         lr=0.0005,
-        beta=0,
+        beta=0.1,
         base_fn='normal',
         nr_mix=100,
         only_positive=False,
@@ -610,4 +610,4 @@ if __name__ == '__main__':
         input_scale=5.0,
     )
     searcher.main(args.seed)
-    searcher.check_solutions(ntimes=1, nsamples=1000, init_seed=args.seed)
+    searcher.check_solutions(ntimes=10, nsamples=1000, init_seed=args.seed)
