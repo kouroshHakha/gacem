@@ -135,7 +135,7 @@ class MADE(nn.Module):
     def forward(self, x):
         y = self.net(x.float())
         # pass the independent variable through more non-linearity to get more expressiveness
-        mask = torch.ones(y.shape, dtype=torch.bool)
+        mask = torch.ones(y.shape, dtype=torch.bool, device=y.device)
         mask[:, self.indp_var::self.nin] = False
         out = y * mask + self.comp_net(y[:, self.indp_var::self.nin]) * (~mask)
         return out
