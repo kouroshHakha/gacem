@@ -390,6 +390,7 @@ class AutoReg2DSearch:
             tr_loss_list.append(tr_nll)
             tr_loss += tr_nll / self.nepochs
 
+            # self.writer.add_scalar('loss', tr_nll, epoch_id)
             print(f'[train_{iter_cnt}] epoch {epoch_id} loss = {tr_nll}')
 
             if split < 1:
@@ -440,6 +441,8 @@ class AutoReg2DSearch:
         checkpoint = torch.load(ckpt_path)
         self.model.load_state_dict(checkpoint['model_state'])
         self.opt.load_state_dict(checkpoint['opt_state'])
+        # override optimizer with input parameters
+        self.opt = optim.Adam(self.model.parameters(), self.lr)
         self.buffer = checkpoint['buffer']
         items = (checkpoint['iter_cnt'], checkpoint['tr_losses'], checkpoint['avg_cost'])
         return items
@@ -525,6 +528,7 @@ class AutoReg2DSearch:
     def report_variation(self, nsamples):
         xsample, _, fval = self._sample_model_for_eval(nsamples)
 
+        total_var = self._compute_emprical_variation(xsample)
         if self.mode == 'le':
             pos_samples = xsample[fval <= self.goal]
             pos_var = self._compute_emprical_variation(pos_samples)
@@ -532,7 +536,8 @@ class AutoReg2DSearch:
             pos_samples = xsample[fval >= self.goal]
             pos_var = self._compute_emprical_variation(pos_samples)
 
-        print(f'solution variation / dim = {pos_var:.6f}')
+        print(f'pos solution variation / dim = {pos_var:.6f}')
+        print(f'total solution variation / dim = {total_var:.6f}')
 
     def plt_hist2D(self, data: np.ndarray, ax=None, name='hist2D', **kwargs):
         fname = self.get_full_name(name,
@@ -592,23 +597,23 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     searcher = AutoReg2DSearch(
-        ndim=10,
+        ndim=2,
         goal_value=4,
         hidden_list=[20, 20, 20],
         mode='le',
         batch_size=16,
-        nepochs=100,
+        nepochs=5,
         nsamples=5,
         n_init_samples=20,
         init_nepochs=50,
         cut_off=20,
-        niter=500,
-        lr=0.0005,
-        beta=1,
+        niter=150,
+        lr=5e-4,
+        beta=0.5,
         base_fn='normal',
-        nr_mix=10,
+        nr_mix=5,
         only_positive=False,
-        full_training_last=True,
+        full_training_last=False,
         load_ckpt_path=args.ckpt,
         input_scale=5.0,
     )
