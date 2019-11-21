@@ -12,8 +12,6 @@ def plot_cost(args):
     for ckpt_f, legend in zip(ckpt_fs, legends):
         checkpoint_data = torch.load(ckpt_f)
         buffer = checkpoint_data['buffer']
-        import pdb
-        pdb.set_trace()
         avg_cost = checkpoint_data['avg_cost']
         ax.plot(avg_cost, label=legend)
 
