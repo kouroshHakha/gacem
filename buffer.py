@@ -128,8 +128,8 @@ class CacheBuffer:
 
     @property
     def mean(self):
-        n = min(self.cut_off, self.size)
-        # n = self.size
+        # n = min(self.cut_off, self.size)
+        n = self.size
         ret = heapq.nsmallest(n, self.db_pq)
         vals = [x[0] for x in ret]
         return float(np.mean(vals))
@@ -150,9 +150,9 @@ class CacheBuffer:
         values_np = np.array(values_list)
         weights = weight(values_np, self.goal, self.mean, self.mode)
         # normalize weights to have a max of 1
-        weights /= weights.max()
-
-        return weights
+        weights_norm = weights / weights.max()
+        pdb.set_trace()
+        return weights_norm
 
     def _get_all_data(self):
         data_list = []
