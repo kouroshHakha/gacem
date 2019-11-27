@@ -8,9 +8,10 @@ def plot_cost(args):
     legends = args.l
     fig_name = args.fig_name
 
+    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
     ax: plt.Axes = plt.gca()
     for ckpt_f, legend in zip(ckpt_fs, legends):
-        checkpoint_data = torch.load(ckpt_f)
+        checkpoint_data = torch.load(ckpt_f, map_location=device)
         buffer = checkpoint_data['buffer']
         avg_cost = checkpoint_data['avg_cost']
         ax.plot(avg_cost, label=legend)

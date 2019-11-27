@@ -113,10 +113,11 @@ class CacheElement:
 
 class CacheBuffer:
 
-    def __init__(self, mode, goal, cut_off=20):
+    def __init__(self, mode, goal, cut_off=0.2):
         self.mode = mode
         self.goal = goal
         self.cut_off = cut_off
+        self._running_mean = float('inf')
 
 
         self.db_set = {} # using a dictionary as ordered set (discard values)
@@ -128,11 +129,13 @@ class CacheBuffer:
 
     @property
     def mean(self):
-        # n = min(self.cut_off, self.size)
-        n = self.size
+        n = int(self.size * self.cut_off)
         ret = heapq.nsmallest(n, self.db_pq)
         vals = [x[0] for x in ret]
-        return float(np.mean(vals))
+        new_mean = float(np.mean(vals))
+        if new_mean < self._running_mean:
+            self._running_mean = new_mean
+        return self._running_mean
 
     def add_samples(self, new_samples: np.ndarray, new_ind: np.ndarray, fvals: np.ndarray):
         for item, item_ind, val in zip(new_samples, new_ind, fvals):
@@ -151,7 +154,6 @@ class CacheBuffer:
         weights = weight(values_np, self.goal, self.mean, self.mode)
         # normalize weights to have a max of 1
         weights_norm = weights / weights.max()
-        pdb.set_trace()
         return weights_norm
 
     def _get_all_data(self):

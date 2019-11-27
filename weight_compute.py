@@ -45,6 +45,25 @@ def plot_distance(mode):
     plt.show()
 
 def weight(zi: np.ndarray, z0: Union[np.ndarray, float], z_avg: float, mode='ge'):
+    """Computes weights as a function of value, goal, and average value
+
+    if zi is better than z0: `w = 1`
+    else:
+        if zi better than z_avg: `w = exp{-\frac{d(zi, z0)}{d(zi, z_avg)}}`
+        else: `w = -exp{1}{d(zi, z_avg)}}`
+    where d(x,y) is the distance between x and y (i.e. euclidean distance)
+
+    Parameters
+    -----------
+    zi: np.ndarray
+        value numpy array
+    z0: Union[np.ndarray, float]
+        goal value per element in zi or a single float for all elements
+    z_avg: float
+        average value
+    mode: str
+        'ge' or 'le', ge means satisfying is equivalent to zi >= z0, le means zi <= z0.
+    """
     is_ok = np.greater_equal if mode == 'ge' else np.less_equal
 
     weights = np.zeros(shape=zi.shape)

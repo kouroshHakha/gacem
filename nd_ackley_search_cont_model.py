@@ -16,24 +16,22 @@ import pdb
 from pathlib import Path
 import random
 import time
-
-from ackley import ackley_func
+from ackley import ackley_func, mixture_ackley, styblinski, plot_fn, show_cutted_fn
 from made import MADE
 from buffer import CacheBuffer
 from utils.pdb import register_pdb_hook
 
 import argparse
 
-
 register_pdb_hook()
 
 class AutoReg2DSearch:
 
-    def __init__(self, ndim, goal_value, hidden_list, mode='le', batch_size=16, cut_off=20,
+    def __init__(self, ndim, goal_value, hidden_list, mode='le', batch_size=16, cut_off=0.2,
                  nepochs=1, nsamples=1, n_init_samples=100, niter=1000, lr=1e-3, beta: float = 0,
                  init_nepochs=1, base_fn='logistic', nr_mix=1, only_positive=False,
                  full_training_last=False, input_scale=1.0, num_input_points=100,
-                 load_ckpt_path=''):
+                 load_ckpt_path='', eval_fn=None):
         """
 
         :param ndim:
@@ -56,6 +54,7 @@ class AutoReg2DSearch:
         :param input_scale: input_range will be on the the scale of [-1, 1] * input_scale with
         num_input_points possible values.
         :param num_input_points:
+        :param fn: callable to the function to evaluate
         """
 
         if load_ckpt_path:
@@ -91,6 +90,10 @@ class AutoReg2DSearch:
         self.load_ckpt_path = load_ckpt_path
         self.input_scale = input_scale
 
+        if eval_fn is None:
+            raise ValueError('evaluation function should be provided')
+        self.fn = eval_fn
+
         self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         self.cpu = torch.device('cpu')
         self.model: Optional[nn.Module] = None
@@ -123,6 +126,7 @@ class AutoReg2DSearch:
                 temp_l.append(random.randrange(0, len_dim))
             samples_ind.append(np.array(temp_l))
 
+
         data_ind = np.stack(samples_ind)
         samples = np.stack([self.input_vectors_norm[i][data_ind[:, i]] for i in range(self.ndim)],
                            axis=-1)
@@ -154,22 +158,22 @@ class AutoReg2DSearch:
         xin = xin.to(self.device)
         xhat = self.model(xin)
         D = self.ndim
-        coeffs = torch.stack([xhat[:, i::D*3] for i in range(D)], dim=1)
+        coeffs = torch.stack([xhat[..., i::D*3] for i in range(D)], dim=-2)
         # Note: coeffs was previously interpreted as log_coeffs
         # interpreting outputs if NN as log is dangerous, can result in Nan's.
         # solution: here they should be positive and should add up to 1, sounds familiar? softmax!
         coeffs_norm = coeffs.softmax(dim=-1)
 
         eps = torch.tensor(1e-15)
-        xb = xin[..., None] + torch.zeros(coeffs.shape)
+        xb = xin[..., None] + torch.zeros(coeffs.shape, device=self.device)
 
         if self.base_fn in ['logistic', 'normal']:
-            means = torch.stack([xhat[:, i+D::D*3] for i in range(D)], dim=1)
-            log_sigma = torch.stack([xhat[:, i+2*D::D*3] for i in range(D)], dim=1)
+            means = torch.stack([xhat[..., i+D::D*3] for i in range(D)], dim=-2)
+            log_sigma = torch.stack([xhat[..., i+2*D::D*3] for i in range(D)], dim=-2)
             # put a cap on the value of output so that it does not blow up
-            log_sigma = torch.min(log_sigma, torch.ones(log_sigma.shape) * 50)
+            log_sigma = torch.min(log_sigma, torch.ones(log_sigma.shape).to(self.device) * 50)
             # put a bottom on the value of output so that it does not diminish and becomes zero
-            log_sigma = torch.max(log_sigma, torch.ones(log_sigma.shape) * (-40))
+            log_sigma = torch.max(log_sigma, torch.ones(log_sigma.shape).to(self.device) * (-40))
             sigma = log_sigma.exp()
 
             if self.base_fn == 'logistic':
@@ -179,10 +183,10 @@ class AutoReg2DSearch:
                 plus_cdf = self.cdf_normal(xb + delta / 2, means, sigma)
                 minus_cdf = self.cdf_normal(xb - delta / 2, means, sigma)
         elif self.base_fn == 'uniform':
-            center = torch.stack([xhat[:, i+D::D*3] for i in range(D)], dim=1)
+            center = torch.stack([xhat[..., i+D::D*3] for i in range(D)], dim=-2)
             # normalize center between [-1,1] to cover all the space
             center = 2 * (center - center.min()) / (center.max() - center.min() + eps) - 1
-            log_delta = torch.stack([xhat[:, i+2*D::D*3] for i in range(D)], dim=1)
+            log_delta = torch.stack([xhat[..., i+2*D::D*3] for i in range(D)], dim=-2)
             # put a cap on the value of output so that it does not blow up
             log_delta = torch.min(log_delta, torch.ones(log_delta.shape) * 50)
             bdelta = log_delta.exp()
@@ -206,7 +210,8 @@ class AutoReg2DSearch:
 
         probs = (coeffs_norm * cdfs).sum(-1)
 
-        bar_grad = torch.autograd.grad(probs[0,0], self.model.net[0].bias, retain_graph=True)[0]
+        bar_grad = torch.autograd.grad(probs.flatten()[0], self.model.net[0].bias,
+                                       retain_graph=True)[0]
         if torch.isnan(bar_grad[0]):
             print(bar_grad)
             print(cdfs)
@@ -274,8 +279,8 @@ class AutoReg2DSearch:
     def sample_probs(self, probs: torch.Tensor, index: int):
         """Given a probability distribution tensor (shape = (N, D, K)) returns 1 sample from the
         distribution probs[:, index, :], the output is indices"""
-        p = probs[:, index]
-        sample = p.multinomial(num_samples=1).squeeze()
+        p = probs[..., index]
+        sample = p.multinomial(num_samples=1).squeeze(-1)
         return sample
 
     def sample_model(self, nsamples: int):
@@ -283,28 +288,47 @@ class AutoReg2DSearch:
 
         D = self.ndim
 
-        samples = []
-        samples_ind = []
-        for k in range(nsamples):
-            xsample = torch.zeros(1, D)
-            xsample_ind = torch.zeros(1, D)
+        # GPU friendly sampling
+        if self.device != torch.device('cpu'):
+            xsample = torch.zeros(nsamples, D, device=self.device)
+            xsample_ind = torch.zeros(nsamples, D, device=self.device)
             for i in range(D):
                 N = len(self.input_vectors_norm[i])
-                xin = torch.zeros(N, D)
+                xin = torch.zeros(nsamples, N, D, device=self.device)
                 if i >= 1:
-                    xin = torch.stack([xsample.squeeze()] * N)
-                xin[:, i] = torch.from_numpy(self.input_vectors_norm[i])
-                #TODO: For normal dist this probs gets a lot of mass on the edges
-                probs = self.get_probs(xin)
+                    xin = torch.stack([xsample] * N, dim=-2)
+                in_torch = torch.from_numpy(self.input_vectors_norm[i]).to(self.device)
+                xin[..., i] = torch.stack([in_torch] * nsamples)
+                xin_reshaped = xin.view((nsamples * N, D))
+                probs_reshaped = self.get_probs(xin_reshaped)
+                probs = probs_reshaped.view((nsamples, N, D))
                 xi_ind = self.sample_probs(probs, i)  # ith x index
-                xsample[0, i] = torch.tensor(self.input_vectors_norm[i][xi_ind])
-                xsample_ind[0, i] = xi_ind
-            samples.append(xsample.squeeze())
-            samples_ind.append(xsample_ind.squeeze())
+                xsample[:, i] = xin[..., i][range(nsamples), xi_ind]
+                xsample_ind[:, i] = xi_ind
+            return xsample, xsample_ind
+        else:
+            samples = []
+            samples_ind = []
+            for k in range(nsamples):
+                xsample = torch.zeros(1, D)
+                xsample_ind = torch.zeros(1, D)
+                for i in range(D):
+                    N = len(self.input_vectors_norm[i])
+                    xin = torch.zeros(N, D)
+                    if i >= 1:
+                        xin = torch.stack([xsample.squeeze()] * N)
+                    xin[:, i] = torch.from_numpy(self.input_vectors_norm[i])
+                    # TODO: For normal dist this probs gets a lot of mass on the edges
+                    probs = self.get_probs(xin)
+                    xi_ind = self.sample_probs(probs, i)  # ith x index
+                    xsample[0, i] = torch.tensor(self.input_vectors_norm[i][xi_ind])
+                    xsample_ind[0, i] = xi_ind
+                samples.append(xsample.squeeze())
+                samples_ind.append(xsample_ind.squeeze())
 
-        samples = torch.stack(samples, dim=0)
-        samples_ind = torch.stack(samples_ind, dim=0)
-        return samples, samples_ind
+            samples = torch.stack(samples, dim=0)
+            samples_ind = torch.stack(samples_ind, dim=0)
+            return samples, samples_ind
 
     def get_full_name(self, name, prefix='', suffix=''):
         if prefix:
@@ -359,7 +383,7 @@ class AutoReg2DSearch:
             # simulate and compute the adjustment weights
             org_sample_list = [vecs[index][id] for index, id in enumerate(xnew_id_np[0, :])]
             xsample = np.array(org_sample_list, dtype='float32')
-            fval = ackley_func(xsample[None, :])
+            fval = self.fn(xsample[None, :])
 
             norm_sample_list = [norm_vecs[index][id] for index, id in enumerate(xnew_id_np[0, :])]
             norm_sample = np.array(norm_sample_list, dtype='float32')
@@ -438,7 +462,7 @@ class AutoReg2DSearch:
         torch.save(dict_to_save, self.load_ckpt_path)
 
     def load_checkpoint(self, ckpt_path):
-        checkpoint = torch.load(ckpt_path)
+        checkpoint = torch.load(ckpt_path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state'])
         self.opt.load_state_dict(checkpoint['opt_state'])
         # override optimizer with input parameters
@@ -490,7 +514,7 @@ class AutoReg2DSearch:
             avg_cost.append(self.buffer.mean)
 
             if iter_cnt == self.niter - 1 and self.full_training:
-                tr_loss, tr_loss_list = self.train(iter_cnt + 1, 1000)
+                tr_loss, tr_loss_list = self.train(iter_cnt + 1, self.nepochs * 10)
             else:
                 tr_loss, tr_loss_list = self.train(iter_cnt + 1, self.nepochs)
 
@@ -512,18 +536,12 @@ class AutoReg2DSearch:
         return var_sum
 
     def _sample_model_for_eval(self, nsamples):
-        vecs = self.input_vectors
+        vector_mat = np.stack(self.input_vectors, axis=0)
         _, sample_ids = self.sample_model(nsamples)
-        org_sample_list = []
-        for i in range(self.ndim):
-            vecs_arrs = np.stack([vecs[i]] * nsamples, axis=0)
-            xi_values = vecs_arrs[np.arange(nsamples), sample_ids[:, i].int()]
-            org_sample_list.append(xi_values)
-
-        xsample = np.stack(org_sample_list, axis=-1)
-        fval: np.ndarray = ackley_func(xsample)
-
-        return xsample, sample_ids, fval
+        sample_ids_arr = sample_ids.long().to(torch.device('cpu')).numpy()
+        xsample_arr = vector_mat[np.arange(self.ndim), sample_ids_arr]
+        fval = self.fn(xsample_arr)
+        return xsample_arr, sample_ids_arr, fval
 
     def report_variation(self, nsamples):
         xsample, _, fval = self._sample_model_for_eval(nsamples)
@@ -536,8 +554,10 @@ class AutoReg2DSearch:
             pos_samples = xsample[fval >= self.goal]
             pos_var = self._compute_emprical_variation(pos_samples)
 
-        print(f'pos solution variation / dim = {pos_var:.6f}')
         print(f'total solution variation / dim = {total_var:.6f}')
+        if np.isnan(pos_var):
+            raise ValueError('did not find any satisfying solutions!')
+        print(f'pos solution variation / dim = {pos_var:.6f}')
 
     def plt_hist2D(self, data: np.ndarray, ax=None, name='hist2D', **kwargs):
         fname = self.get_full_name(name,
@@ -553,12 +573,62 @@ class AutoReg2DSearch:
         plt.savefig(self.dir / f'{fname}.png')
         plt.close()
 
+    def report_rnd_accuracy_and_var(self, ntimes, nsamples):
+        accuracy_rnd_list = []
+        total_var_list, pos_var_list = [], []
+
+        if self.ndim == 2:
+            _, rnd_ids = self.sample_data(nsamples)
+            self.plt_hist2D(rnd_ids.astype('int'), name='random_policy')
+            x, y = self.input_vectors
+            plot_fn(x, y, self.fn, str(self.dir / 'fn2D.png'))
+            show_cutted_fn(x, y, self.fn, self.goal, str(self.dir / 'dist2D.png'))
+
+
+        vector_mat = np.stack(self.input_vectors, axis=0)
+        for iter_id in range(ntimes):
+            _, rnd_ids = self.sample_data(nsamples)
+            rnd_samples = vector_mat[np.arange(self.ndim), rnd_ids]
+            total_var = self._compute_emprical_variation(rnd_samples)
+            rnd_fval = self.fn(rnd_samples)
+            if self.mode == 'le':
+                pos_samples = rnd_samples[rnd_fval <= self.goal]
+                if len(pos_samples) != 0:
+                    pos_var = self._compute_emprical_variation(pos_samples)
+                else:
+                    pos_var = np.NAN
+                accuracy_rnd_list.append((rnd_fval <= self.goal).sum(-1) / nsamples)
+            else:
+                pos_samples = rnd_samples[rnd_fval >= self.goal]
+                if len(pos_samples) != 0:
+                    pos_var = self._compute_emprical_variation(pos_samples)
+                else:
+                    pos_var = np.NAN
+                accuracy_rnd_list.append((rnd_fval >= self.goal).sum(-1) / nsamples)
+
+            pos_var_list.append(pos_var)
+            total_var_list.append(total_var)
+
+        accuracy_rnd = np.array(accuracy_rnd_list, dtype='float32')
+        print(f'accuracy_rnd_avg = {100 * np.mean(accuracy_rnd).astype("float"):.6f}, '
+              f'accuracy_rnd_std = {100 * np.std(accuracy_rnd).astype("float"):.6f}')
+        print(f'random policy total variation / dim = '
+              f'{np.mean(total_var_list).astype("float"):.6f}')
+
+        pos_var_arr = np.array(pos_var_list)
+        if len(pos_var_arr[~np.isnan(pos_var_arr)]) == 0:
+            print('No positive solution was found with random policy')
+        else:
+            print(f'pos solution variation / dim ='
+                  f' {np.mean(pos_var_arr[~np.isnan(pos_var_arr)]):.6f}')
+
     def report_accuracy(self, ntimes, nsamples):
         accuracy_list, times = [], []
 
         if self.ndim == 2:
             _, sample_ids, _ = self._sample_model_for_eval(nsamples)
-            self.plt_hist2D(sample_ids.to(self.cpu).data.numpy().astype('int'))
+            self.plt_hist2D(sample_ids.to(self.cpu).data.numpy().astype('int'),
+                            name='trained_policy')
 
         for iter_id in range(ntimes):
             s = time.time()
@@ -569,14 +639,12 @@ class AutoReg2DSearch:
                 accuracy_list.append((fval >= self.goal).sum(-1) / nsamples)
             times.append(time.time() - s)
 
-
         accuracy = np.array(accuracy_list, dtype='float32')
         times = np.array(times, dtype='float64')
 
         print(f'gen_time / sample = {1e3 * np.mean(times).astype("float") / nsamples:.3f} ms')
         print(f'accuracy_avg = {100 * np.mean(accuracy).astype("float"):.2f}, '
               f'accuracy_std = {100 * np.std(accuracy).astype("float"):.2f}')
-
 
     def check_solutions(self, ntimes=1, nsamples=1000, init_seed=10):
         self.set_seed(init_seed)
@@ -585,19 +653,20 @@ class AutoReg2DSearch:
         self.setup_model_state()
 
         print('-------- REPORT --------')
+        self.report_rnd_accuracy_and_var(ntimes, nsamples)
         self.report_accuracy(ntimes, nsamples)
         self.report_variation(nsamples)
 
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('-s', '--seed', type=int, default=10, help='random seed')
     parser.add_argument('-ckpt', '--ckpt', type=str, default='', help='checkpoint path')
     args = parser.parse_args()
 
     searcher = AutoReg2DSearch(
-        ndim=2,
+        ndim=20,
         goal_value=4,
         hidden_list=[20, 20, 20],
         mode='le',
@@ -606,16 +675,20 @@ if __name__ == '__main__':
         nsamples=5,
         n_init_samples=20,
         init_nepochs=50,
-        cut_off=20,
-        niter=150,
+        cut_off=0.4,
+        niter=1000,
         lr=5e-4,
-        beta=0.5,
+        beta=1,
         base_fn='normal',
         nr_mix=5,
-        only_positive=False,
+        only_positive=True,
         full_training_last=False,
         load_ckpt_path=args.ckpt,
         input_scale=5.0,
+        eval_fn=ackley_func,
     )
+
+    searcher.report_rnd_accuracy_and_var(ntimes=10, nsamples=1000)
+    input('Press Enter To continue:')
     searcher.main(args.seed)
     searcher.check_solutions(ntimes=10, nsamples=100, init_seed=args.seed)
