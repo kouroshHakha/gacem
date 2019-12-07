@@ -33,7 +33,7 @@ def mixture_ackley(x: Union[np.ndarray, numbers.Number]) -> np.ndarray:
     return y_tot
 
 def styblinski(x):
-    return 0.5 * ((x ** 4).sum(-1) - 16 * (x ** 2).sum(-1) + 5 * x.sum(-1)) / x.shape[-1]
+    return 0.5 * ((x ** 4).sum(-1) - 16 * (x ** 2).sum(-1) + 5 * x.sum(-1)) / x.shape[-1] + 50
 
 
 def ackley_func(x: Union[np.ndarray, numbers.Number]) -> np.ndarray:
