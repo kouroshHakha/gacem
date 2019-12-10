@@ -11,3 +11,5 @@ __pycache__
 data/*
 # tesorflow
 *.tfevents*
+
+spec_files
