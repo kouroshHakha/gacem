@@ -1,22 +1,23 @@
-import numpy as np
-import random
-from scipy.stats import multivariate_normal
-from scipy.stats import gaussian_kde
-import matplotlib.pyplot as plt
-from pathlib import Path
-from utils.pdb import register_pdb_hook
-import ruamel_yaml as yaml
-import inspect
-import time
+from typing import Optional, Mapping, Any
+
 import pickle
-import pdb
-from ackley import ackley_func, mixture_ackley, styblinski
-from buffer import CacheBuffer
-import argparse
-from viz import Viz
+import random
+import time
+from pathlib import Path
 
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.stats import gaussian_kde
+from scipy.stats import multivariate_normal
 
-register_pdb_hook()
+from utils.file import read_yaml, write_yaml, get_full_name
+from utils.loggingBase import LoggingBase
+
+from ...benchmarks.functions import registered_functions
+from ...benchmarks.fom import get_diversity_fom, compute_emprical_variation
+from ...data.buffer import CacheBuffer
+from ...viz.viz import plot_pca_2d, plt_hist2D
+from ...data.vector import index_to_xval
 
 class CEM:
     """
@@ -55,8 +56,6 @@ class CEM:
             if self.type == 'gaussian':
                 samples = multivariate_normal.rvs(self.params['mu'],
                                                   self.params['var'], n)
-                # samples = multivariate_normal.rvs(self.params['mu'],
-                #                                   np.diag(self.params['var']), n)
             else:
                 samples = self.params['kde'].resample(n)
                 samples = samples.transpose()
@@ -75,49 +74,65 @@ class CEM:
         return samples
 
 
-class CEMSearch:
+class CEMSearch(LoggingBase):
 
-    def __init__(self, ndim, nsamples, n_init_samples,
-                 niter, fn, goal_value, cut_off, input_scale,
-                 num_input_points, mode='le',
-                 load_ckpt_path='',
-                 base_fn='guassian'):
+    # noinspection PyUnusedLocal
+    def __init__(self, spec_file: str = '', spec_dict: Optional[Mapping[str, Any]] = None,
+                 load: bool = False, **kwargs) -> None:
+        LoggingBase.__init__(self)
 
-        self.load_ckpt_path = load_ckpt_path
-        if load_ckpt_path:
-            self.dir = Path(load_ckpt_path).parent
+        if spec_file:
+            specs = read_yaml(spec_file)
         else:
-            l_args, _, _, values = inspect.getargvalues(inspect.currentframe())
-            params = dict(zip(l_args, [values[i] for i in l_args]))
-            self.unique_name = time.strftime('%Y%m%d%H%M%S')
-            self.dir = Path(f'data/cem_{self.unique_name}')
-            self.dir.mkdir(parents=True, exist_ok=True)
-            with open(self.dir / 'params.yaml', 'w') as f:
-                yaml.dump(params, f)
+            specs = spec_dict
 
-        self.ndim = ndim
-        self.nsamples = nsamples
-        self.n_init_samples = n_init_samples
-        self.niter = niter
-        self.cut_off = cut_off
-        self.input_scale = input_scale
+        self.specs = specs
+        params = specs['params']
+
+        if load:
+            self.work_dir = Path(spec_file).parent
+        else:
+            unique_name = time.strftime('%Y%m%d%H%M%S')
+            suffix = params.get('suffix', '')
+            if suffix:
+                unique_name += f'_{suffix}'
+            self.work_dir = Path(specs['root_dir']) / f'cont_autoreg_{unique_name}'
+            write_yaml(self.work_dir / 'params.yaml', specs, mkdir=True)
+
+        self.load = load
+        self.set_seed(params['seed'])
+
+        self.ndim = params['ndim']
+        self.nsamples = params['nsamples']
+        self.n_init_samples = params['n_init_samples']
+        self.niter = params['niter']
+        self.cut_off = params['cut_off']
+        self.input_scale = params['input_scale']
         # goal has to always be positive if not we'll change mode and negate self.goal
-        self.goal = goal_value
-        self.mode = mode
-        self.fn = fn
+        self.goal = params['goal_value']
+        self.mode = params['mode']
+
+        eval_fn = params['eval_fn']
+        try:
+            fn = registered_functions[eval_fn]
+            self.fn = fn
+        except KeyError:
+            raise ValueError(f'{eval_fn} is not a valid benchmark function')
+
         if self.goal < 0:
             self.mode = 'le' if self.mode == 'ge' else 'ge'
             self.fn = lambda x: -fn(x)
 
-        input_vectors_norm = [np.linspace(start=-1.0, stop=1.0, dtype='float32',
-                                               num=num_input_points) for _ in range(ndim)]
-        self.input_vectors = [input_scale * vec for vec in input_vectors_norm]
+        # hacky version of passing input vectors around
+        self.input_vectors_norm = [np.linspace(start=-1.0, stop=1.0, dtype='float32',
+                                               num=100) for _ in range(self.ndim)]
+        self.input_vectors = [self.input_scale * vec for vec in self.input_vectors_norm]
 
-        self.cem = CEM(self.input_vectors, dist_type=base_fn)
-
+        self.cem = CEM(self.input_vectors, dist_type=params['base_fn'])
         self.buffer = CacheBuffer(self.mode, self.goal, self.cut_off)
 
-    def set_seed(self, seed):
+    @classmethod
+    def set_seed(cls, seed):
         random.seed(seed)
         np.random.seed(seed)
 
@@ -126,7 +141,7 @@ class CEMSearch:
             err = (fvals - self.goal) / self.goal
         else:
             err = (self.goal - fvals) / self.goal
-        scores = np.maximum(err , 0)
+        scores = np.maximum(err, 0)
         return scores
 
     def plot_cost(self, avg_cost):
@@ -135,7 +150,7 @@ class CEMSearch:
         plt.title('samples mean')
         plt.xlabel('iter')
         plt.ylabel('avg_cost')
-        plt.savefig(self.dir / 'cost.png')
+        plt.savefig(self.work_dir / 'cost.png')
         plt.close()
 
     def save_checkpoint(self, iter_cnt, avg_cost):
@@ -146,35 +161,23 @@ class CEMSearch:
             cem=self.cem,
         )
 
-        if not self.load_ckpt_path:
-            self.load_ckpt_path = self.dir / 'checkpoint.pickle'
-
-        with open(self.load_ckpt_path, 'wb') as f:
+        with open(self.work_dir / 'checkpoint.pickle', 'wb') as f:
             pickle.dump(dict_to_save, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    def load_checkpoint(self):
-        with open(self.load_ckpt_path, 'rb') as f:
+    def load_checkpoint(self, ckpt_path):
+        with open(ckpt_path, 'rb') as f:
             checkpoint = pickle.load(f)
         self.cem = checkpoint['cem']
         self.buffer = checkpoint['buffer']
         items = (checkpoint['iter_cnt'], checkpoint['avg_cost'])
         return items
 
-    def index_to_xval(self, samples):
-        cols = []
-        dim = len(self.input_vectors)
-        for i in range(dim):
-            mat = np.zeros(shape=(samples.shape[0], 1)) + self.input_vectors[i][None, :]
-            cols.append(mat[range(samples.shape[0]), samples[:, i]])
-        xsamples = np.stack(cols, axis=-1)
-        return xsamples
-
     def collect_samples(self, n):
         n_collected = 0
         new_samples = []
         while n_collected < n:
             samples = self.cem.sample(n - n_collected)
-            xsamples = self.index_to_xval(samples)
+            xsamples = index_to_xval(self.input_vectors, samples)
             for xsample, sample in zip(xsamples, samples):
                 if xsample not in self.buffer:
                     fval = self.fn(xsample)
@@ -186,28 +189,6 @@ class CEMSearch:
 
         return np.array(new_samples)
 
-
-    def get_full_name(self, name, prefix='', suffix=''):
-        if prefix:
-            name = f'{prefix}_{name}'
-        if suffix:
-            name = f'{name}_{suffix}'
-        return name
-
-    def plt_hist2D(self, data: np.ndarray, ax=None, name='hist2D', **kwargs):
-        fname = self.get_full_name(name,
-                                   suffix=kwargs.pop('suffix', ''),
-                                   prefix=kwargs.pop('prefix', ''))
-        xvec, yvec = self.input_vectors
-        if ax is None:
-            ax = plt.gca()
-        s = self.input_scale
-        im = ax.hist2d(xvec[data[:, 0]], yvec[data[:, 1]], bins=100,
-                       range=np.array([(-s, s), (-s, s)]), **kwargs)
-        plt.colorbar(im[-1], ax=ax)
-        plt.savefig(self.dir / f'{fname}.png')
-        plt.close()
-
     def get_top_samples(self, iter_cnt):
         samples = np.array([x.item_ind for x in self.buffer.db_set])
         fvals = np.array([x.val for x in self.buffer.db_set])
@@ -218,21 +199,20 @@ class CEMSearch:
         sorted_sample_ids = sorted(sample_ids, key=lambda i: scores_arr[i])
 
         sorted_samples = samples[sorted_sample_ids]
-        sorted_scores = scores_arr[sorted_sample_ids]
 
         top_index = int(self.cut_off * len(sorted_samples))
         top_samples = sorted_samples[:top_index]
 
         # plot exploration
         if self.ndim == 2:
-            self.plt_hist2D(samples, name='dist',
-                            prefix='training', suffix=f'{iter_cnt}_before', cmap='binary')
+            fpath = get_full_name(name='dist', prefix='training', suffix=f'{iter_cnt}_before')
+            plt_hist2D(self.input_vectors, samples, fpath=fpath, cmap='binary')
 
         return top_samples
 
     def setup_state(self):
-        if self.load_ckpt_path:
-            iter_cnt, avg_cost = self.load_checkpoint()
+        if self.load:
+            iter_cnt, avg_cost = self.load_checkpoint(self.work_dir / 'checkpoint.pickle')
         else:
             iter_cnt = 0
             avg_cost = []
@@ -241,8 +221,8 @@ class CEMSearch:
             self.cem.fit(top_samples)
             if self.ndim == 2:
                 xdata_ind = self.cem.sample(1000)
-                self.plt_hist2D(xdata_ind, name='dist', prefix='training',
-                                suffix=f'0_after', cmap='binary')
+                fpath = get_full_name(name='dist', prefix='training', suffix=f'0_after')
+                plt_hist2D(self.input_vectors, xdata_ind, fpath=fpath, cmap='binary')
 
         return iter_cnt, avg_cost
 
@@ -251,13 +231,14 @@ class CEMSearch:
 
         if self.ndim == 2:
             sample_ids = self.cem.sample(nsamples)
-            self.plt_hist2D(sample_ids, name='trained_policy', cmap='binary')
+            plt_hist2D(self.input_vectors, sample_ids, fpath=self.work_dir / 'trained_policy',
+                       cmap='binary')
 
         for iter_id in range(ntimes):
             s = time.time()
             sample_ids = self.cem.sample(nsamples)
-            xsample = self.index_to_xval(sample_ids)
-            fval = self.fn(xsample)
+            xsample = index_to_xval(self.input_vectors, sample_ids)
+            fval: np.ndarray = self.fn(xsample)
             if self.mode == 'le':
                 acc = (fval <= self.goal).sum(-1) / nsamples
                 pos_samples = xsample[fval <= self.goal]
@@ -266,7 +247,7 @@ class CEMSearch:
                 pos_samples = xsample[fval >= self.goal]
 
             if len(pos_samples) >= self.ndim:
-                div = Viz.get_diversity_fom(self.ndim, pos_samples)
+                div = get_diversity_fom(self.ndim, pos_samples)
                 div_list.append(div)
 
             times.append(time.time() - s)
@@ -277,24 +258,19 @@ class CEMSearch:
               f'accuracy_std = {100 * np.std(accuracy_list).astype("float"):.6f}, '
               f'solution diversity = {np.mean(div_list).astype("float"):.6f}')
 
-    def _compute_emprical_variation(self, samples):
-        mean = samples.mean(0)
-        cov_mat = ((samples - mean).T @ (samples - mean)) / samples.shape[0]
-        var_sum = cov_mat.trace() / samples.shape[-1]
-        return var_sum
 
     def report_variation(self, nsamples):
         sample_ids = self.cem.sample(nsamples)
-        xsample = self.index_to_xval(sample_ids)
+        xsample = index_to_xval(self.input_vectors, sample_ids)
         fval = self.fn(xsample)
 
-        total_var = self._compute_emprical_variation(xsample)
+        total_var = compute_emprical_variation(xsample)
         if self.mode == 'le':
             pos_samples = xsample[fval <= self.goal]
-            pos_var = self._compute_emprical_variation(pos_samples)
+            pos_var = compute_emprical_variation(pos_samples)
         else:
             pos_samples = xsample[fval >= self.goal]
-            pos_var = self._compute_emprical_variation(pos_samples)
+            pos_var = compute_emprical_variation(pos_samples)
 
         print(f'total solution variation / dim = {total_var:.6f}')
         if np.isnan(pos_var):
@@ -311,26 +287,22 @@ class CEMSearch:
         self.report_variation(nsamples)
         self.plot_solution_space(nsamples=1000)
 
-
     def plot_solution_space(self, nsamples=100):
         ax = plt.gca()
         sample_ids = self.cem.sample(nsamples)
-        xsample = self.index_to_xval(sample_ids)
+        xsample = index_to_xval(self.input_vectors, sample_ids)
         fval = self.fn(xsample)
         if self.mode == 'le':
             pos_samples = xsample[fval <= self.goal]
         else:
             pos_samples = xsample[fval >= self.goal]
 
-        Viz.plot_pca_2d(pos_samples, ax)
-        plt.savefig(self.dir / f'pca_sol.png')
+        plot_pca_2d(pos_samples, ax)
+        plt.savefig(self.work_dir / f'pca_sol.png')
         plt.close()
 
-    def main(self, seed):
-        self.set_seed(seed)
-
+    def _run_alg(self):
         iter_cnt, avg_cost = self.setup_state()
-
 
         while iter_cnt < self.niter:
             self.collect_samples(self.nsamples)
@@ -341,32 +313,13 @@ class CEMSearch:
 
             if (iter_cnt + 1) % 10 == 0 and self.ndim == 2:
                 xdata_ind = self.cem.sample(1000)
-                self.plt_hist2D(xdata_ind, name='dist', prefix='training',
-                                suffix=f'{iter_cnt+1}_after', cmap='binary')
+                fpath = get_full_name(name='dist', prefix='training', suffix=f'{iter_cnt+1}_after')
+                plt_hist2D(self.input_vectors, xdata_ind, fpath=fpath, cmap='binary')
             iter_cnt += 1
             self.save_checkpoint(iter_cnt, avg_cost)
 
         self.plot_cost(avg_cost)
 
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('-s', '--seed', type=int, default=10, help='random seed')
-    parser.add_argument('-ckpt', '--ckpt', type=str, default='', help='checkpoint path')
-    args = parser.parse_args()
-
-    searcher = CEMSearch(ndim=2,
-                         goal_value=20,
-                         n_init_samples=20,
-                         nsamples=5,
-                         niter=100,
-                         fn=styblinski,
-                         cut_off=0.4,
-                         input_scale=5.0,
-                         num_input_points=100,
-                         mode='le',
-                         load_ckpt_path=args.ckpt,
-                         base_fn='kde',
-                         )
-    searcher.main(args.seed)
-    searcher.check_solutions(ntimes=10, nsamples=1000, init_seed=args.seed)
+    def main(self):
+        self._run_alg()
+        self.check_solutions(ntimes=10, nsamples=1000)

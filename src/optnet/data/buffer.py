@@ -1,14 +1,11 @@
-from typing import Sequence, Optional, Iterable
-
 import heapq
+from typing import Optional
+
 import numpy as np
 
+from optnet.alg.utils.weight_compute import weight
 from utils.data import split_data
 
-from weight_compute import weight
-
-import pdb
-import time
 
 class BufferNumpy:
     """Naive implementation of Buffer"""
@@ -112,6 +109,7 @@ class CacheElement:
 
 
 class CacheBuffer:
+    """Buffer with caching capabilities"""
 
     def __init__(self, mode, goal, cut_off=0.2):
         self.mode = mode

@@ -10,14 +10,15 @@ don't have a weight of 1 we should assign positive weight to the samples that pe
 average.
 """
 
+import pdb
+
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-import matplotlib.pyplot as plt
-import pdb
 
-from ackley import ackley_func
-from made import MADE
+from optnet.benchmarks.functions import ackley
+from optnet.models.made import MADE
 from utils.data import split_data
 from utils.pdb import register_pdb_hook
 
@@ -35,7 +36,7 @@ def sample_data(nsample=100, goal=4):
         x2_rand = np.random.choice(range(len(x2)))
 
         sample = np.array([x1[x1_rand], x2[x2_rand]])
-        fval = ackley_func(sample)
+        fval = ackley(sample)
 
         if fval < goal:
             weights.append(1)

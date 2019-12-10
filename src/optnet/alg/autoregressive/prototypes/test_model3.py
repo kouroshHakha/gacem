@@ -3,16 +3,16 @@ This script tests whether the model can learn the distribution of a given data,
 The weights are continuous values between -1 and 1.
 """
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-import matplotlib.pyplot as plt
 
-from ackley import ackley_func
-from made import MADE
+from optnet.alg.utils.weight_compute import weight
+from optnet.benchmarks.functions import ackley
+from optnet.models.made import MADE
 from utils.data import split_data
 from utils.pdb import register_pdb_hook
-from weight_compute import weight
 
 register_pdb_hook()
 
@@ -187,7 +187,7 @@ class Learner:
         torch.cuda.manual_seed_all(seed)
 
         data = sample_data(self.nsample)
-        fval = ackley_func(data[:, 0, :])
+        fval = ackley(data[:, 0, :])
         weights = weight(fval, self.goal, 4, mode='le')
         xtr, xte, wtr, wte = split_data(data, label=weights)
 

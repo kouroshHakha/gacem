@@ -7,11 +7,8 @@ import numpy as np
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as tf
 
-from utils.pdb import register_pdb_hook
-
-register_pdb_hook()
 
 # ------------------------------------------------------------------------------
 class MaskedLinear(nn.Linear):
@@ -25,11 +22,11 @@ class MaskedLinear(nn.Linear):
         mask_t = torch.from_numpy(mask.astype(np.int).T)
         self.mask.data.copy_(mask_t)
 
-    def forward(self, input):
-        return F.linear(input, self.mask * self.weight, self.bias)
+    def forward(self, _input):
+        return tf.linear(_input, self.mask * self.weight, self.bias)
 
 class MADE(nn.Module):
-    def __init__(self, nin, hidden_sizes, nout, num_masks=1, natural_ordering=False, seed=0,
+    def __init__(self, n_in, hidden_sizes, n_out, num_masks=1, natural_ordering=False, seed=0,
                  bias_init = 0.1):
         """
         nin: integer; number of inputs
@@ -44,15 +41,15 @@ class MADE(nn.Module):
         """
 
         super().__init__()
-        self.nin = nin
-        self.nout = nout
+        self.nin = n_in
+        self.nout = n_out
         self.hidden_sizes = hidden_sizes
         self.bias_init = bias_init
         assert self.nout % self.nin == 0, "nout must be integer multiple of nin"
 
         # define a simple MLP neural net
         self.net = []
-        hs = [nin] + hidden_sizes + [nout]
+        hs = [n_in] + hidden_sizes + [n_out]
 
         # dropout_layer = nn.Dropout(0, inplace=True)
 
@@ -67,13 +64,13 @@ class MADE(nn.Module):
         self.net.pop() # pop the last ReLU for the output layer
         self.net = nn.Sequential(*self.net)
 
-        D = nout // nin
+        out_dim = n_out // n_in
         self.comp_net = nn.Sequential(
-            nn.Linear(D, 10),
+            nn.Linear(out_dim, 10),
             nn.LeakyReLU(),
             nn.Linear(10, 10),
             nn.LeakyReLU(),
-            nn.Linear(10, nout),
+            nn.Linear(10, n_out),
         )
 
         self.net.apply(self.init_weights)
@@ -163,7 +160,8 @@ if __name__ == '__main__':
 
         print("checking nin %d, hiddens %s, nout %d, natural %s" %
               (nin, hiddens, nout, natural_ordering))
-        model = MADE(nin, hiddens, nout, natural_ordering=natural_ordering, num_masks=3, seed=2)
+        model: nn.Module = MADE(nin, hiddens, nout, natural_ordering=natural_ordering,
+                                num_masks=3, seed=2)
         # run backpropagation for each dimension to compute what other
         # dimensions it depends on.
         res = []

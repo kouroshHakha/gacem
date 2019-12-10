@@ -5,17 +5,17 @@ This take into account the important sampling, and dependency of objective on th
 like how p_B(x) depends on \theta.
 We make buffer not include current distribution.
 """
+import pdb
+
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import matplotlib.pyplot as plt
 
-import pdb
-
-from ackley import ackley_func, show_weight_on_all
-from made import MADE
-from buffer import CacheBuffer
+from optnet.benchmarks.functions import ackley, show_weight_on_all
+from optnet.data.buffer import CacheBuffer
+from optnet.models.made import MADE
 from utils.pdb import register_pdb_hook
 
 register_pdb_hook()
@@ -225,7 +225,7 @@ class AutoReg2DSearch:
             xnew_probs_np = xnew_probs.to(self.cpu).data.numpy()
 
             # simulate and compute the adjustment weights
-            fval = ackley_func(xnew_np)
+            fval = ackley(xnew_np)
 
             if xnew_np not in self.buffer:
                 self.buffer.add_samples(xnew_np, xnew_id_np, fval)

@@ -1,165 +1,123 @@
 """
-This module extends ackley_auto_reg_search3_cont_model.py to n dimensional optimization with the
-same optimal point.
+This module implements an algorithm for and optimizer that uses continuous auto-regressive
+probability density estimator models to estimate the probability of solution regions for a
+multi-constrained black-box optimization
 """
-from typing import Optional
-import numpy as np
+from typing import Optional, Mapping, Any, Tuple, Union
+
 import math
+import pdb
+import random
+import time
+from copy import deepcopy
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-# from torch.utils.tensorboard import SummaryWriter
-import matplotlib.pyplot as plt
-import ruamel_yaml as yaml
-import inspect
-import pdb
-from pathlib import Path
-import random
-import time
-from ackley import ackley_func, mixture_ackley, styblinski, plot_fn, show_cutted_fn
-from made import MADE
-from buffer import CacheBuffer
-from utils.pdb import register_pdb_hook
-from viz import Viz
 
-import argparse
+from utils.file import read_yaml, write_yaml, get_full_name
+from utils.loggingBase import LoggingBase
 
-register_pdb_hook()
+from ...benchmarks.functions import registered_functions
+from ...benchmarks.fom import (
+    compute_emprical_variation, get_diversity_fom
+)
+from ...torch.dist import cdf_logistic, cdf_normal, cdf_uniform
+from ...data.buffer import CacheBuffer
+from ...models.made import MADE
+from ..random.random import Random
 
-class AutoRegSearch:
+from ...viz.viz import plot_pca_2d, plt_hist2D
 
-    def __init__(self, ndim, goal_value, hidden_list, mode='le', batch_size=16, cut_off=0.2,
-                 nepochs=1, nsamples=1, n_init_samples=100, niter=1000, lr=1e-3, beta: float = 0,
-                 init_nepochs=1, base_fn='logistic', nr_mix=1, only_positive=False,
-                 full_training_last=False, input_scale=1.0, num_input_points=100,
-                 load_ckpt_path='', eval_fn=None):
-        """
 
-        :param ndim:
-        :param goal_value:
-        :param hidden_list:
-        :param mode:
-        :param batch_size:
-        :param cut_off:
-        :param nepochs:
-        :param nsamples:
-        :param n_init_samples:
-        :param niter:
-        :param lr:
-        :param beta:
-        :param init_nepochs:
-        :param base_fn:
-        :param nr_mix:
-        :param only_positive:
-        :param full_training_last:
-        :param input_scale: input_range will be on the the scale of [-1, 1] * input_scale with
-        num_input_points possible values.
-        :param num_input_points:
-        :param fn: callable to the function to evaluate
-        """
+class AutoRegSearch(LoggingBase):
 
-        if load_ckpt_path:
-            self.dir = Path(load_ckpt_path).parent
+    # noinspection PyUnusedLocal
+    def __init__(self, spec_file: str = '', spec_dict: Optional[Mapping[str, Any]] = None,
+                 load: bool = False, **kwargs) -> None:
+        LoggingBase.__init__(self)
+
+        if spec_file:
+            specs = read_yaml(spec_file)
         else:
-            l_args, _, _, values = inspect.getargvalues(inspect.currentframe())
-            params = dict(zip(l_args, [values[i] for i in l_args]))
-            self.unique_name = time.strftime('%Y%m%d%H%M%S')
-            self.dir = Path(f'data/search_fig_{self.unique_name}')
-            self.dir.mkdir(parents=True, exist_ok=True)
-            with open(self.dir / 'params.yaml', 'w') as f:
-                yaml.dump(params, f)
+            specs = spec_dict
 
-        self.ndim = ndim
-        self.bsize = batch_size
-        self.hiddens = hidden_list
-        self.niter = niter
-        self.goal = goal_value
-        self.mode = mode
-        self.viz_rate = niter // 10
-        self.lr = lr
-        self.nepochs = nepochs
-        self.nsamples = nsamples
-        self.n_init_samples = n_init_samples
-        self.init_nepochs = init_nepochs
-        self.cut_off = cut_off
-        self.beta = beta
-        self.nr_mix = nr_mix
-        self.base_fn = base_fn
-        self.only_pos = only_positive
+        self.specs = specs
+        params = specs['params']
+
+        if load:
+            self.work_dir = Path(spec_file).parent
+        else:
+            unique_name = time.strftime('%Y%m%d%H%M%S')
+            suffix = params.get('suffix', '')
+            if suffix:
+                unique_name += f'_{suffix}'
+            self.work_dir = Path(specs['root_dir']) / f'cont_autoreg_{unique_name}'
+            write_yaml(self.work_dir / 'params.yaml', specs, mkdir=True)
+
+        self.load = load
+        self.set_seed(params['seed'])
+        self.seed = params['seed']
+        self.ndim = params['ndim']
+        self.bsize = params['batch_size']
+        self.hiddens = params['hidden_list']
+        self.niter = params['niter']
+        self.goal = params['goal_value']
+        self.mode = params['mode']
+        self.viz_rate = self.niter // 10
+        self.lr = params['lr']
+        self.nepochs = params['nepochs']
+        self.nsamples = params['nsamples']
+        self.n_init_samples = params['n_init_samples']
+        self.init_nepochs = params['init_nepochs']
+        self.cut_off = params['cut_off']
+        self.beta = params['beta']
+        self.nr_mix = params['nr_mix']
+        self.base_fn = params['base_fn']
+        self.only_pos = params['only_positive']
         # whether to run 1000 epochs of training for the later round of iteration
-        self.full_training = full_training_last
-        self.load_ckpt_path = load_ckpt_path
-        self.input_scale = input_scale
+        self.full_training = params['full_training_last']
+        self.input_scale = params['input_scale']
 
-        if eval_fn is None:
-            raise ValueError('evaluation function should be provided')
-        self.fn = eval_fn
+        eval_fn = params['eval_fn']
+        try:
+            self.fn = registered_functions[eval_fn]
+        except KeyError:
+            raise ValueError(f'{eval_fn} is not a valid benchmark function')
 
         self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         self.cpu = torch.device('cpu')
         self.model: Optional[nn.Module] = None
+        self.buffer = None
         self.opt = None
-
-        # self.writer = SummaryWriter()
 
         # hacky version of passing input vectors around
         self.input_vectors_norm = [np.linspace(start=-1.0, stop=1.0, dtype='float32',
-                                               num=num_input_points) for _ in range(ndim)]
-        self.input_vectors = [input_scale * vec for vec in self.input_vectors_norm]
+                                               num=100) for _ in range(self.ndim)]
+        self.input_vectors = [self.input_scale * vec for vec in self.input_vectors_norm]
         # TODO: remove this hacky way of keeping track of delta
         self.delta = self.input_vectors_norm[0][-1] - self.input_vectors_norm[0][-2]
 
-    def set_seed(self, seed):
+    @classmethod
+    def set_seed(cls, seed):
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
+        # noinspection PyUnresolvedReferences
         torch.cuda.manual_seed_all(seed)
 
-    def sample_data(self, nsample=100):
-        """ sample randomly (i.e. not on policy)
-        Returns both the actual sample numbers and their corresponding indices
-        """
-        samples_ind = []
-        while len(samples_ind) < nsample:
-            temp_l = []
-            for i in range(self.ndim):
-                len_dim = len(self.input_vectors_norm[i])
-                temp_l.append(random.randrange(0, len_dim))
-            samples_ind.append(np.array(temp_l))
-
-
-        data_ind = np.stack(samples_ind)
-        samples = np.stack([self.input_vectors_norm[i][data_ind[:, i]] for i in range(self.ndim)],
-                           axis=-1)
-
-        return samples, data_ind
-
-    def cdf_normal(self, x: torch.Tensor, mean: torch.Tensor, sigma: torch.Tensor):
-        x_centered = x - mean
-        erf_x = (x_centered / torch.tensor(2**0.5) / sigma).erf()
-        return 0.5 * (1 + erf_x)
-
-    def cdf_logistic(self, x: torch.Tensor, mean: torch.Tensor, sigma: torch.Tensor):
-        x_centered = x - mean
-        sigmoid_x = (x_centered / torch.tensor(2**0.5) / sigma).sigmoid()
-        return sigmoid_x
-
-    def cdf_uniform(self, x: torch.Tensor, a: torch.Tensor, b: torch.Tensor):
-        eps = torch.tensor(1e-15)
-        l = (x - a) / (b - a + eps)
-        bot = l.relu()
-        cdf = - (torch.tensor(1)-bot).relu() + 1
-        return cdf
-
     def get_probs(self, xin: torch.Tensor, debug=False):
-        """Given an input tensor (N, D) computes the probabilities across the cardinality space
-        of each dimension. prob.shape = (N, D, K) where K is number of possible values for each
+        """Given an input tensor (N, dim) computes the probabilities across the cardinality space
+        of each dimension. prob.shape = (N, dim, K) where K is number of possible values for each
         dimension. Assume that xin is normalized to [-1,1], and delta is given."""
         delta = self.delta
         xin = xin.to(self.device)
         xhat = self.model(xin)
-        D = self.ndim
-        coeffs = torch.stack([xhat[..., i::D*3] for i in range(D)], dim=-2)
+        dim = self.ndim
+        coeffs = torch.stack([xhat[..., i::dim*3] for i in range(dim)], dim=-2)
         # Note: coeffs was previously interpreted as log_coeffs
         # interpreting outputs if NN as log is dangerous, can result in Nan's.
         # solution: here they should be positive and should add up to 1, sounds familiar? softmax!
@@ -169,8 +127,8 @@ class AutoRegSearch:
         xb = xin[..., None] + torch.zeros(coeffs.shape, device=self.device)
 
         if self.base_fn in ['logistic', 'normal']:
-            means = torch.stack([xhat[..., i+D::D*3] for i in range(D)], dim=-2)
-            log_sigma = torch.stack([xhat[..., i+2*D::D*3] for i in range(D)], dim=-2)
+            means = torch.stack([xhat[..., i+dim::dim*3] for i in range(dim)], dim=-2)
+            log_sigma = torch.stack([xhat[..., i+2*dim::dim*3] for i in range(dim)], dim=-2)
             # put a cap on the value of output so that it does not blow up
             log_sigma = torch.min(log_sigma, torch.ones(log_sigma.shape).to(self.device) * 50)
             # put a bottom on the value of output so that it does not diminish and becomes zero
@@ -178,23 +136,23 @@ class AutoRegSearch:
             sigma = log_sigma.exp()
 
             if self.base_fn == 'logistic':
-                plus_cdf = self.cdf_logistic(xb + delta / 2, means, sigma)
-                minus_cdf = self.cdf_logistic(xb - delta / 2, means, sigma)
+                plus_cdf = cdf_logistic(xb + delta / 2, means, sigma)
+                minus_cdf = cdf_logistic(xb - delta / 2, means, sigma)
             else:
-                plus_cdf = self.cdf_normal(xb + delta / 2, means, sigma)
-                minus_cdf = self.cdf_normal(xb - delta / 2, means, sigma)
+                plus_cdf = cdf_normal(xb + delta / 2, means, sigma)
+                minus_cdf = cdf_normal(xb - delta / 2, means, sigma)
         elif self.base_fn == 'uniform':
-            center = torch.stack([xhat[..., i+D::D*3] for i in range(D)], dim=-2)
+            center = torch.stack([xhat[..., i+dim::dim*3] for i in range(dim)], dim=-2)
             # normalize center between [-1,1] to cover all the space
             center = 2 * (center - center.min()) / (center.max() - center.min() + eps) - 1
-            log_delta = torch.stack([xhat[..., i+2*D::D*3] for i in range(D)], dim=-2)
+            log_delta = torch.stack([xhat[..., i+2*dim::dim*3] for i in range(dim)], dim=-2)
             # put a cap on the value of output so that it does not blow up
             log_delta = torch.min(log_delta, torch.ones(log_delta.shape) * 50)
             bdelta = log_delta.exp()
             a = center - bdelta / 2
             b = center + bdelta / 2
-            plus_cdf = self.cdf_uniform(xb + delta / 2, a, b)
-            minus_cdf = self.cdf_uniform(xb - delta / 2, a, b)
+            plus_cdf = cdf_uniform(xb + delta / 2, a, b)
+            minus_cdf = cdf_uniform(xb - delta / 2, a, b)
         else:
             raise ValueError(f'unsupported base_fn = {self.base_fn}')
 
@@ -223,8 +181,6 @@ class AutoRegSearch:
 
         return probs
 
-
-
     def get_nll(self, xin: torch.Tensor, weights=None, debug=False):
         """Given an input tensor computes the average negative likelihood of observing the inputs"""
         probs = self.get_probs(xin)
@@ -237,10 +193,9 @@ class AutoRegSearch:
             pos_ind = (weights > 0).float()
             neg_ind = torch.tensor(1) - pos_ind
 
-
             # obj_term  = - self.buffer.size * (weights * prob_x).data
             # ent_term = self.buffer.size * (self.beta * (torch.tensor(1) + logp_vec)).data
-            obj_term  = - (weights).data
+            obj_term  = - weights.data
             ent_term = (self.beta * (torch.tensor(1) + logp_vec)).data
 
             # coeff = (ent_term + obj_term) * pos_ind
@@ -276,8 +231,8 @@ class AutoRegSearch:
 
         return min_obj
 
-
-    def sample_probs(self, probs: torch.Tensor, index: int):
+    @classmethod
+    def sample_probs(cls, probs: torch.Tensor, index: int):
         """Given a probability distribution tensor (shape = (N, D, K)) returns 1 sample from the
         distribution probs[:, index, :], the output is indices"""
         p = probs[..., index]
@@ -287,22 +242,22 @@ class AutoRegSearch:
     def sample_model(self, nsamples: int):
         self.model.eval()
 
-        D = self.ndim
+        dim = self.ndim
 
         # GPU friendly sampling
         if self.device != torch.device('cpu'):
-            xsample = torch.zeros(nsamples, D, device=self.device)
-            xsample_ind = torch.zeros(nsamples, D, device=self.device)
-            for i in range(D):
-                N = len(self.input_vectors_norm[i])
-                xin = torch.zeros(nsamples, N, D, device=self.device)
+            xsample = torch.zeros(nsamples, dim, device=self.device)
+            xsample_ind = torch.zeros(nsamples, dim, device=self.device)
+            for i in range(dim):
+                n = len(self.input_vectors_norm[i])
+                xin = torch.zeros(nsamples, n, dim, device=self.device)
                 if i >= 1:
-                    xin = torch.stack([xsample] * N, dim=-2)
+                    xin = torch.stack([xsample] * n, dim=-2)
                 in_torch = torch.from_numpy(self.input_vectors_norm[i]).to(self.device)
                 xin[..., i] = torch.stack([in_torch] * nsamples)
-                xin_reshaped = xin.view((nsamples * N, D))
+                xin_reshaped = xin.view((nsamples * n, dim))
                 probs_reshaped = self.get_probs(xin_reshaped)
-                probs = probs_reshaped.view((nsamples, N, D))
+                probs = probs_reshaped.view((nsamples, n, dim))
                 xi_ind = self.sample_probs(probs, i)  # ith x index
                 xsample[:, i] = xin[..., i][range(nsamples), xi_ind]
                 xsample_ind[:, i] = xi_ind
@@ -311,13 +266,13 @@ class AutoRegSearch:
             samples = []
             samples_ind = []
             for k in range(nsamples):
-                xsample = torch.zeros(1, D)
-                xsample_ind = torch.zeros(1, D)
-                for i in range(D):
-                    N = len(self.input_vectors_norm[i])
-                    xin = torch.zeros(N, D)
+                xsample = torch.zeros(1, dim)
+                xsample_ind = torch.zeros(1, dim)
+                for i in range(dim):
+                    n = len(self.input_vectors_norm[i])
+                    xin = torch.zeros(n, dim)
                     if i >= 1:
-                        xin = torch.stack([xsample.squeeze()] * N)
+                        xin = torch.stack([xsample.squeeze()] * n)
                     xin[:, i] = torch.from_numpy(self.input_vectors_norm[i])
                     # TODO: For normal dist this probs gets a lot of mass on the edges
                     probs = self.get_probs(xin)
@@ -331,29 +286,22 @@ class AutoRegSearch:
             samples_ind = torch.stack(samples_ind, dim=0)
             return samples, samples_ind
 
-    def get_full_name(self, name, prefix='', suffix=''):
-        if prefix:
-            name = f'{prefix}_{name}'
-        if suffix:
-            name = f'{name}_{suffix}'
-        return name
-
     def run_epoch(self, data: np.ndarray, weights: np.ndarray, mode='train',
                   debug=False):
         self.model.train() if mode == 'train' else self.model.eval()
 
-        N, D,  _ = data.shape
+        n, dim,  _ = data.shape
 
-        assert N != 0, 'no data found'
+        assert n != 0, 'no data found'
 
-        B = max(self.bsize, 2 ** math.floor(math.log2(N / 4))) if mode == 'train' else N
-        nstep = N // B if mode == 'train' else 1
+        bsize = max(self.bsize, 2 ** math.floor(math.log2(n / 4))) if mode == 'train' else n
+        nstep = n // bsize if mode == 'train' else 1
 
         nll_per_b = 0
 
         for step in range(nstep):
-            xb = data[step * B: step * B + B]
-            wb = weights[step * B: step * B + B]
+            xb = data[step * bsize: step * bsize + bsize]
+            wb = weights[step * bsize: step * bsize + bsize]
             xb_tens = torch.from_numpy(xb).to(self.device)
             wb_tens = torch.from_numpy(wb).to(self.device)
 
@@ -375,18 +323,18 @@ class AutoRegSearch:
         norm_vecs = self.input_vectors_norm
         while n_collected < n_samples:
             if uniform:
-                _, xnew_id_np = self.sample_data(1)
+                _, xnew_id_np = Random.sample_data(self.ndim, self.input_vectors_norm, 1)
                 xnew_id_np = xnew_id_np.astype('int')
             else:
                 _, xnew_ind = self.sample_model(1)
                 xnew_id_np = xnew_ind.to(self.cpu).data.numpy().astype('int')
 
             # simulate and compute the adjustment weights
-            org_sample_list = [vecs[index][id] for index, id in enumerate(xnew_id_np[0, :])]
+            org_sample_list = [vecs[index][pos] for index, pos in enumerate(xnew_id_np[0, :])]
             xsample = np.array(org_sample_list, dtype='float32')
             fval = self.fn(xsample[None, :])
 
-            norm_sample_list = [norm_vecs[index][id] for index, id in enumerate(xnew_id_np[0, :])]
+            norm_sample_list = [norm_vecs[index][pos] for index, pos in enumerate(xnew_id_np[0, :])]
             norm_sample = np.array(norm_sample_list, dtype='float32')
 
             if norm_sample not in self.buffer:
@@ -398,13 +346,13 @@ class AutoRegSearch:
 
         return new_samples
 
-
     def train(self, iter_cnt: int, nepochs: int, split=1.0):
         # treat the sampled data as a static data set and take some gradient steps on it
         xtr, xte, wtr, wte = self.buffer.draw_tr_te_ds(split=split)
         if self.ndim == 2:
-            self.plt_hist2D(xtr[:, 1, :].astype('int'),
-                            name='dist', prefix='training', suffix=f'{iter_cnt}_before')
+            fpath = self.work_dir / get_full_name(name='dist', prefix='training',
+                                                  suffix=f'{iter_cnt}_before')
+            plt_hist2D(self.input_vectors, xtr[:, 1, :].astype('int'), fpath=fpath, cmap='binary')
 
         # per epoch
         print('-'*50)
@@ -425,7 +373,7 @@ class AutoRegSearch:
                 print(f'[test_{iter_cnt}] epoch {epoch_id} loss = {te_nll}')
 
         if split < 1:
-            return tr_loss , te_loss
+            return tr_loss, te_loss
 
         return tr_loss, tr_loss_list
 
@@ -439,7 +387,7 @@ class AutoRegSearch:
         plt.legend()
         plt.xlabel('epoch')
         plt.ylabel('loss')
-        plt.savefig(self.dir / 'learning_curve.png')
+        plt.savefig(self.work_dir / 'learning_curve.png')
         plt.close()
 
     def plot_cost(self, avg_cost):
@@ -448,7 +396,7 @@ class AutoRegSearch:
         plt.title('buffer top samples mean')
         plt.xlabel('iter')
         plt.ylabel('avg_cost')
-        plt.savefig(self.dir / 'cost.png')
+        plt.savefig(self.work_dir / 'cost.png')
         plt.close()
 
     def save_checkpoint(self, iter_cnt, tr_losses, avg_cost):
@@ -460,10 +408,9 @@ class AutoRegSearch:
             model_state=self.model.state_dict(),
             opt_state=self.opt.state_dict(),
         )
-        self.load_ckpt_path = self.dir / 'checkpoint.tar'
-        torch.save(dict_to_save, self.load_ckpt_path)
+        torch.save(dict_to_save, self.work_dir / 'checkpoint.tar')
 
-    def load_checkpoint(self, ckpt_path):
+    def load_checkpoint(self, ckpt_path: Union[str, Path]):
         checkpoint = torch.load(ckpt_path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state'])
         self.opt.load_state_dict(checkpoint['opt_state'])
@@ -473,10 +420,10 @@ class AutoRegSearch:
         items = (checkpoint['iter_cnt'], checkpoint['tr_losses'], checkpoint['avg_cost'])
         return items
 
-    def setup_model(self, seed):
-        D = self.ndim
-        self.model = MADE(D, self.hiddens, D * 3 * self.nr_mix, seed=seed,
-                          natural_ordering=True)
+    def setup_model(self):
+        dim = self.ndim
+        self.model: nn.Module = MADE(dim, self.hiddens, dim * 3 * self.nr_mix, seed=self.seed,
+                                     natural_ordering=True)
         self.model.to(self.device)
 
         self.opt = optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=0)
@@ -485,8 +432,8 @@ class AutoRegSearch:
 
     def setup_model_state(self):
         # load the model or proceed without loading checkpoints
-        if self.load_ckpt_path:
-            items = self.load_checkpoint(self.load_ckpt_path)
+        if self.load:
+            items = self.load_checkpoint(self.work_dir / 'checkpoint.tar')
         else:
             # collect samples using the random initial model (probably a bad initialization)
             self.model.eval()
@@ -497,18 +444,18 @@ class AutoRegSearch:
 
             if self.ndim == 2:
                 _, xdata_ind = self.sample_model(1000)
-                self.plt_hist2D(xdata_ind.to(self.cpu).data.numpy().astype('int'),
-                                name='dist', prefix='training', suffix=f'0_after')
+                fpath = self.work_dir / get_full_name(name='dist', prefix='training',
+                                                      suffix=f'0_after')
+                data = xdata_ind.to(self.cpu).data.numpy().astype('int')
+                plt_hist2D(self.input_vectors, data, fpath=fpath, cmap='binary')
+
             items = (0, [], [])
             self.save_checkpoint(*items)
         return items
 
+    def _run_alg(self):
 
-    def main(self, seed=10):
-
-        self.set_seed(seed)
-
-        self.setup_model(seed)
+        self.setup_model()
         iter_cnt, tr_losses, avg_cost = self.setup_model_state()
 
         while iter_cnt < self.niter:
@@ -523,21 +470,18 @@ class AutoRegSearch:
             tr_losses.append(tr_loss_list)
             if (iter_cnt + 1) % 10 == 0 and self.ndim == 2:
                 _, xdata_ind = self.sample_model(1000)
-                self.plt_hist2D(xdata_ind.to(self.cpu).data.numpy().astype('int'),
-                                name='dist', prefix='training', suffix=f'{iter_cnt+1}_after')
+                fpath = self.work_dir / get_full_name(name='dist', prefix='training',
+                                                      suffix=f'{iter_cnt+1}_after')
+                data = xdata_ind.to(self.cpu).data.numpy().astype('int')
+                plt_hist2D(self.input_vectors, data, fpath=fpath, cmap='binary')
+
             iter_cnt += 1
             self.save_checkpoint(iter_cnt, tr_losses, avg_cost)
 
         self.plot_learning_with_epochs(training=tr_losses)
         self.plot_cost(avg_cost)
 
-    def _compute_emprical_variation(self, samples):
-        mean = samples.mean(0)
-        cov_mat = ((samples - mean).T @ (samples - mean)) / samples.shape[0]
-        var_sum = cov_mat.trace() / samples.shape[-1]
-        return var_sum
-
-    def _sample_model_for_eval(self, nsamples):
+    def _sample_model_for_eval(self, nsamples) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         vector_mat = np.stack(self.input_vectors, axis=0)
         _, sample_ids = self.sample_model(nsamples)
         sample_ids_arr = sample_ids.long().to(torch.device('cpu')).numpy()
@@ -548,95 +492,26 @@ class AutoRegSearch:
     def report_variation(self, nsamples):
         xsample, _, fval = self._sample_model_for_eval(nsamples)
 
-        total_var = self._compute_emprical_variation(xsample)
+        total_var = compute_emprical_variation(xsample)
         if self.mode == 'le':
             pos_samples = xsample[fval <= self.goal]
-            pos_var = self._compute_emprical_variation(pos_samples)
+            pos_var = compute_emprical_variation(pos_samples)
         else:
             pos_samples = xsample[fval >= self.goal]
-            pos_var = self._compute_emprical_variation(pos_samples)
+            pos_var = compute_emprical_variation(pos_samples)
 
         print(f'total solution variation / dim = {total_var:.6f}')
         if np.isnan(pos_var):
             raise ValueError('did not find any satisfying solutions!')
         print(f'pos solution variation / dim = {pos_var:.6f}')
 
-    def plt_hist2D(self, data: np.ndarray, ax=None, name='hist2D', **kwargs):
-        fname = self.get_full_name(name,
-                                   suffix=kwargs.pop('suffix', ''),
-                                   prefix=kwargs.pop('prefix', ''))
-        xvec, yvec = self.input_vectors
-        if ax is None:
-            ax = plt.gca()
-        s = self.input_scale
-        im = ax.hist2d(xvec[data[:, 0]], yvec[data[:, 1]], bins=100, cmap='binary',
-                       range=np.array([(-s, s), (-s, s)]), **kwargs)
-        plt.colorbar(im[-1], ax=ax)
-        plt.savefig(self.dir / f'{fname}.png')
-        plt.close()
-
-    def report_rnd_accuracy_and_var(self, ntimes, nsamples):
-        accuracy_rnd_list = []
-        total_var_list, pos_var_list = [], []
-        diversity_fom_list = []
-
-        if self.ndim == 2:
-            _, rnd_ids = self.sample_data(nsamples)
-            self.plt_hist2D(rnd_ids.astype('int'), name='random_policy')
-            x, y = self.input_vectors
-            plot_fn(x, y, self.fn, str(self.dir / 'fn2D.png'))
-            show_cutted_fn(x, y, self.fn, self.goal, str(self.dir / 'dist2D.png'))
-
-
-        vector_mat = np.stack(self.input_vectors, axis=0)
-        for iter_id in range(ntimes):
-            _, rnd_ids = self.sample_data(nsamples)
-            rnd_samples = vector_mat[np.arange(self.ndim), rnd_ids]
-            total_var = self._compute_emprical_variation(rnd_samples)
-            rnd_fval = self.fn(rnd_samples)
-            if self.mode == 'le':
-                pos_samples = rnd_samples[rnd_fval <= self.goal]
-                if len(pos_samples) != 0:
-                    pos_var = self._compute_emprical_variation(pos_samples)
-                else:
-                    pos_var = np.NAN
-                accuracy_rnd_list.append((rnd_fval <= self.goal).sum(-1) / nsamples)
-            else:
-                pos_samples = rnd_samples[rnd_fval >= self.goal]
-                if len(pos_samples) != 0:
-                    pos_var = self._compute_emprical_variation(pos_samples)
-                else:
-                    pos_var = np.NAN
-                accuracy_rnd_list.append((rnd_fval >= self.goal).sum(-1) / nsamples)
-
-            pos_var_list.append(pos_var)
-            total_var_list.append(total_var)
-
-            if len(pos_samples) >= self.ndim :
-                div = Viz.get_diversity_fom(self.ndim, pos_samples)
-                diversity_fom_list.append(div)
-
-        accuracy_rnd = np.array(accuracy_rnd_list, dtype='float32')
-        print(f'accuracy_rnd_avg = {100 * np.mean(accuracy_rnd).astype("float"):.6f}, '
-              f'accuracy_rnd_std = {100 * np.std(accuracy_rnd).astype("float"):.6f}')
-        print(f'random policy total variation / dim = '
-              f'{np.mean(total_var_list).astype("float"):.6f}')
-
-        pos_var_arr = np.array(pos_var_list)
-        if len(pos_var_arr[~np.isnan(pos_var_arr)]) == 0:
-            print('No positive solution was found with random policy')
-        else:
-            print(f'pos solution variation / dim ='
-                  f' {np.mean(pos_var_arr[~np.isnan(pos_var_arr)]):.6f}')
-            print(f'random policy solution diversity FOM: '
-                  f'{np.mean(diversity_fom_list).astype("float"):.6f}')
-
     def report_accuracy(self, ntimes, nsamples):
         accuracy_list, times, div_list = [], [], []
 
         if self.ndim == 2:
             _, sample_ids, _ = self._sample_model_for_eval(nsamples)
-            self.plt_hist2D(sample_ids, name='trained_policy')
+            plt_hist2D(self.input_vectors, sample_ids,
+                       fpath=self.work_dir / get_full_name('trained_policy'), cmap='binary')
 
         for iter_id in range(ntimes):
             s = time.time()
@@ -649,19 +524,18 @@ class AutoRegSearch:
                 pos_samples = xsample[fval >= self.goal]
 
             if len(pos_samples) >= self.ndim:
-                div = Viz.get_diversity_fom(self.ndim, pos_samples)
+                div = get_diversity_fom(self.ndim, pos_samples)
                 div_list.append(div)
 
             times.append(time.time() - s)
             accuracy_list.append(acc)
-
 
         print(f'gen_time / sample = {1e3 * np.mean(times).astype("float") / nsamples:.3f} ms')
         print(f'accuracy_avg = {100 * np.mean(accuracy_list).astype("float"):.6f}, '
               f'accuracy_std = {100 * np.std(accuracy_list).astype("float"):.6f}, '
               f'solution diversity = {np.mean(div_list).astype("float"):.6f}')
 
-    def plot_solution_space(self, nsamples=100):
+    def plot_model_sol_pca(self, nsamples=100):
         ax = plt.gca()
         xsample, sample_ids, fval = self._sample_model_for_eval(nsamples)
         if self.mode == 'le':
@@ -669,55 +543,29 @@ class AutoRegSearch:
         else:
             pos_samples = xsample[fval >= self.goal]
 
-        Viz.plot_pca_2d(pos_samples, ax)
-        plt.savefig(self.dir / f'pca_sol.png')
+        plot_pca_2d(pos_samples, ax)
+        plt.savefig(self.work_dir / f'pca_sol.png')
         plt.close()
 
-
-    def check_solutions(self, ntimes=1, nsamples=1000, init_seed=10):
-        self.set_seed(init_seed)
-
-        self.setup_model(init_seed)
+    def check_solutions(self, ntimes=1, nsamples=1000):
+        self.setup_model()
         self.setup_model_state()
 
         print('-------- REPORT --------')
-        self.report_rnd_accuracy_and_var(ntimes, nsamples)
+        self.check_random_solutions(ntimes, nsamples)
         self.report_accuracy(ntimes, nsamples)
         self.report_variation(nsamples)
-        self.plot_solution_space()
+        self.plot_model_sol_pca()
 
+    def check_random_solutions(self, ntimes, nsamples):
+        rnd_specs = deepcopy(self.specs)
+        rnd_params = rnd_specs['params']
+        rnd_params['work_dir'] = self.work_dir
+        random_policy = Random(spec_dict=rnd_specs)
+        random_policy.check_solutions(ntimes, nsamples)
 
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('-s', '--seed', type=int, default=10, help='random seed')
-    parser.add_argument('-ckpt', '--ckpt', type=str, default='', help='checkpoint path')
-    args = parser.parse_args()
-
-    searcher = AutoRegSearch(
-        ndim=2,
-        goal_value=20,
-        hidden_list=[20, 20, 20],
-        mode='le',
-        batch_size=16,
-        nepochs=5,
-        nsamples=5,
-        n_init_samples=20,
-        init_nepochs=50,
-        cut_off=0.4,
-        niter=150,
-        lr=5e-4,
-        beta=1,
-        base_fn='normal',
-        nr_mix=5,
-        only_positive=True,
-        full_training_last=False,
-        load_ckpt_path=args.ckpt,
-        input_scale=5.0,
-        eval_fn=styblinski,
-    )
-
-    searcher.report_rnd_accuracy_and_var(ntimes=10, nsamples=1000)
-    input('Press Enter To continue:')
-    searcher.main(args.seed)
-    searcher.check_solutions(ntimes=10, nsamples=1000, init_seed=args.seed)
+    def main(self) -> None:
+        self.check_random_solutions(ntimes=10, nsamples=1000)
+        input('Press Enter To continue:')
+        self._run_alg()
+        self.check_solutions(ntimes=10, nsamples=1000)

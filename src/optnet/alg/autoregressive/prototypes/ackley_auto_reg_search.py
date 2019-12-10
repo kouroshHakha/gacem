@@ -9,17 +9,17 @@ through p_B(x), however we don't take this gradient in the code because of simpl
 It does not work in a sense that it over-fits to horizontal/vertical lines and in the end just
 selects a handful of samples in the center.
 """
+import pdb
+
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import matplotlib.pyplot as plt
 
-import pdb
-
-from ackley import ackley_func, show_weight_on_all
-from made import MADE
-from buffer import BufferNumpy
+from optnet.benchmarks.functions import ackley, show_weight_on_all
+from optnet.data.buffer import BufferNumpy
+from optnet.models.made import MADE
 from utils.pdb import register_pdb_hook
 
 register_pdb_hook()
@@ -219,7 +219,7 @@ class AutoReg2DSearch:
         xnew_probs_np = xnew_probs.to(self.cpu).data.numpy()
 
         # simulate and compute the adjustment weights
-        fval = ackley_func(xnew_np)
+        fval = ackley(xnew_np)
         self.buffer.add_samples(xnew_np, xnew_id_np, fval, xnew_probs_np)
 
 
