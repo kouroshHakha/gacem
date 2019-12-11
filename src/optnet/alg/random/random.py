@@ -11,7 +11,7 @@ from optnet.benchmarks.functions import registered_functions
 from optnet.benchmarks.fom import (
     compute_emprical_variation, get_diversity_fom
 )
-from optnet.viz.viz import (
+from optnet.viz.plot import (
     plot_fn2d, plt_hist2D, show_solution_region
 )
 
@@ -82,12 +82,11 @@ class Random(LoggingBase):
         diversity_fom_list = []
 
         if self.ndim == 2:
-            _, rnd_ids = self.sample_data(self.ndim, self.input_vectors_norm, nsamples)
+            rnd_samples, _ = self.sample_data(self.ndim, self.input_vectors, nsamples)
             s = self.input_scale
-            plt_hist2D(self.input_vectors,
-                       rnd_ids.astype('int'),
-                       fpath=self.work_dir / get_full_name('random_policy'),
-                       range=np.array([(-s, s), (-s, s)]))
+            _range = np.array([[-s, s], [s, s]])
+            plt_hist2D(rnd_samples, fpath=self.work_dir / get_full_name('random_policy'),
+                       range=_range, cmap='binary')
             x, y = self.input_vectors
             plot_fn2d(x, y, self.fn, fpath=str(self.work_dir / 'fn2D.png'), cmap='viridis')
             show_solution_region(x, y, self.fn, self.goal, mode=self.mode,

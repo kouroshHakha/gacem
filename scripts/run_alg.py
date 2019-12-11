@@ -12,7 +12,7 @@ register_pdb_hook()
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('spec_fpath', type=str, default=10, help='class name')
+    parser.add_argument('spec_fpath', type=str, help='spec file path')
     parser.add_argument('--load', default=False, action='store_true',
                         help='If True loads the results from root_dir in spec_file')
     parsed_args = parser.parse_args()

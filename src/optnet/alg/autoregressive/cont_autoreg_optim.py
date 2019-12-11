@@ -12,7 +12,6 @@ import time
 from copy import deepcopy
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
@@ -29,8 +28,11 @@ from ...torch.dist import cdf_logistic, cdf_normal, cdf_uniform
 from ...data.buffer import CacheBuffer
 from ...models.made import MADE
 from ..random.random import Random
+from ...data.vector import index_to_xval
 
-from ...viz.viz import plot_pca_2d, plt_hist2D
+from ...viz.plot import (
+    plot_pca_2d, plt_hist2D, plot_cost, plot_learning_with_epochs
+)
 
 
 class AutoRegSearch(LoggingBase):
@@ -53,14 +55,14 @@ class AutoRegSearch(LoggingBase):
         else:
             unique_name = time.strftime('%Y%m%d%H%M%S')
             suffix = params.get('suffix', '')
-            if suffix:
-                unique_name += f'_{suffix}'
-            self.work_dir = Path(specs['root_dir']) / f'cont_autoreg_{unique_name}'
+            prefix = params.get('prefix', '')
+            unique_name = get_full_name(unique_name, prefix, suffix)
+            self.work_dir = Path(specs['root_dir']) / f'{unique_name}'
             write_yaml(self.work_dir / 'params.yaml', specs, mkdir=True)
 
         self.load = load
-        self.set_seed(params['seed'])
-        self.seed = params['seed']
+        self.seed = params.get('seed', 10)
+        self.set_seed(self.seed)
         self.ndim = params['ndim']
         self.bsize = params['batch_size']
         self.hiddens = params['hidden_list']
@@ -89,6 +91,7 @@ class AutoRegSearch(LoggingBase):
             raise ValueError(f'{eval_fn} is not a valid benchmark function')
 
         self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        print(f'device: {self.device}')
         self.cpu = torch.device('cpu')
         self.model: Optional[nn.Module] = None
         self.buffer = None
@@ -239,28 +242,53 @@ class AutoRegSearch(LoggingBase):
         sample = p.multinomial(num_samples=1).squeeze(-1)
         return sample
 
-    def sample_model(self, nsamples: int):
+    def sample_model(self, nsamples: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """samples the current model nsamples times and returns both normalized samples i.e
+        between [-1, 1] and sample indices
+
+        Parameters
+        ----------
+        nsamples: int
+            number of samples
+
+        Returns
+        -------
+        samples: Tuple[torch.Tensor, torch.Tensor]
+            normalized samples / sample indices
+        """
         self.model.eval()
 
         dim = self.ndim
 
         # GPU friendly sampling
         if self.device != torch.device('cpu'):
-            xsample = torch.zeros(nsamples, dim, device=self.device)
-            xsample_ind = torch.zeros(nsamples, dim, device=self.device)
-            for i in range(dim):
-                n = len(self.input_vectors_norm[i])
-                xin = torch.zeros(nsamples, n, dim, device=self.device)
-                if i >= 1:
-                    xin = torch.stack([xsample] * n, dim=-2)
-                in_torch = torch.from_numpy(self.input_vectors_norm[i]).to(self.device)
-                xin[..., i] = torch.stack([in_torch] * nsamples)
-                xin_reshaped = xin.view((nsamples * n, dim))
-                probs_reshaped = self.get_probs(xin_reshaped)
-                probs = probs_reshaped.view((nsamples, n, dim))
-                xi_ind = self.sample_probs(probs, i)  # ith x index
-                xsample[:, i] = xin[..., i][range(nsamples), xi_ind]
-                xsample_ind[:, i] = xi_ind
+            total_niter = -(-nsamples // self.bsize)
+            xsample_list, xsample_ind_list = [], []
+            for iter_cnt in range(total_niter):
+                if iter_cnt == total_niter - 1:
+                    bsize = nsamples - iter_cnt * self.bsize
+                else:
+                    bsize = self.bsize
+                xsample = torch.zeros(bsize, dim, device=self.device)
+                xsample_ind = torch.zeros(bsize, dim, device=self.device)
+                for i in range(dim):
+                    n = len(self.input_vectors_norm[i])
+                    xin = torch.zeros(bsize, n, dim, device=self.device)
+                    if i >= 1:
+                        xin = torch.stack([xsample] * n, dim=-2)
+                    in_torch = torch.from_numpy(self.input_vectors_norm[i]).to(self.device)
+                    xin[..., i] = torch.stack([in_torch] * bsize)
+                    xin_reshaped = xin.view((bsize * n, dim))
+                    probs_reshaped = self.get_probs(xin_reshaped)
+                    probs = probs_reshaped.view((bsize, n, dim))
+                    xi_ind = self.sample_probs(probs, i)  # ith x index
+                    xsample[:, i] = xin[..., i][range(bsize), xi_ind]
+                    xsample_ind[:, i] = xi_ind
+                xsample_ind_list.append(xsample_ind)
+                xsample_list.append(xsample)
+
+            xsample = torch.cat(xsample_list, dim=0)
+            xsample_ind = torch.cat(xsample_ind_list, dim=0)
             return xsample, xsample_ind
         else:
             samples = []
@@ -352,7 +380,10 @@ class AutoRegSearch(LoggingBase):
         if self.ndim == 2:
             fpath = self.work_dir / get_full_name(name='dist', prefix='training',
                                                   suffix=f'{iter_cnt}_before')
-            plt_hist2D(self.input_vectors, xtr[:, 1, :].astype('int'), fpath=fpath, cmap='binary')
+            samples = index_to_xval(self.input_vectors, xtr[:, 1, :].astype('int'))
+            s = self.input_scale
+            _range = np.array([[-s, s], [-s, s]])
+            plt_hist2D(samples, fpath=fpath, range=_range, cmap='binary')
 
         # per epoch
         print('-'*50)
@@ -377,28 +408,6 @@ class AutoRegSearch(LoggingBase):
 
         return tr_loss, tr_loss_list
 
-    def plot_learning_with_epochs(self, **kwrd_losses):
-        plt.close()
-        for key, loss in kwrd_losses.items():
-            loss_list = []
-            for i, l in enumerate(loss):
-                loss_list += l
-            plt.plot(loss_list, label=f'{key}_loss')
-        plt.legend()
-        plt.xlabel('epoch')
-        plt.ylabel('loss')
-        plt.savefig(self.work_dir / 'learning_curve.png')
-        plt.close()
-
-    def plot_cost(self, avg_cost):
-        plt.close()
-        plt.plot(avg_cost)
-        plt.title('buffer top samples mean')
-        plt.xlabel('iter')
-        plt.ylabel('avg_cost')
-        plt.savefig(self.work_dir / 'cost.png')
-        plt.close()
-
     def save_checkpoint(self, iter_cnt, tr_losses, avg_cost):
         dict_to_save = dict(
             iter_cnt=iter_cnt,
@@ -411,6 +420,7 @@ class AutoRegSearch(LoggingBase):
         torch.save(dict_to_save, self.work_dir / 'checkpoint.tar')
 
     def load_checkpoint(self, ckpt_path: Union[str, Path]):
+        s = time.time()
         checkpoint = torch.load(ckpt_path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state'])
         self.opt.load_state_dict(checkpoint['opt_state'])
@@ -418,6 +428,7 @@ class AutoRegSearch(LoggingBase):
         self.opt = optim.Adam(self.model.parameters(), self.lr)
         self.buffer = checkpoint['buffer']
         items = (checkpoint['iter_cnt'], checkpoint['tr_losses'], checkpoint['avg_cost'])
+        print(f'Model checkpoint loaded in {time.time() - s:.4f} seconds')
         return items
 
     def setup_model(self):
@@ -446,8 +457,11 @@ class AutoRegSearch(LoggingBase):
                 _, xdata_ind = self.sample_model(1000)
                 fpath = self.work_dir / get_full_name(name='dist', prefix='training',
                                                       suffix=f'0_after')
-                data = xdata_ind.to(self.cpu).data.numpy().astype('int')
-                plt_hist2D(self.input_vectors, data, fpath=fpath, cmap='binary')
+                data_ind = xdata_ind.to(self.cpu).data.numpy().astype('int')
+                data = index_to_xval(self.input_vectors, data_ind)
+                s = self.input_scale
+                _range = np.array([[-s, s], [-s, s]])
+                plt_hist2D(data, fpath=fpath, range=_range, cmap='binary')
 
             items = (0, [], [])
             self.save_checkpoint(*items)
@@ -472,14 +486,17 @@ class AutoRegSearch(LoggingBase):
                 _, xdata_ind = self.sample_model(1000)
                 fpath = self.work_dir / get_full_name(name='dist', prefix='training',
                                                       suffix=f'{iter_cnt+1}_after')
-                data = xdata_ind.to(self.cpu).data.numpy().astype('int')
-                plt_hist2D(self.input_vectors, data, fpath=fpath, cmap='binary')
+                data_ind = xdata_ind.to(self.cpu).data.numpy().astype('int')
+                data = index_to_xval(self.input_vectors, data_ind)
+                s = self.input_scale
+                _range = np.array([[-s, s], [-s, s]])
+                plt_hist2D(data, fpath=fpath, range=_range, cmap='binary')
 
             iter_cnt += 1
             self.save_checkpoint(iter_cnt, tr_losses, avg_cost)
 
-        self.plot_learning_with_epochs(training=tr_losses)
-        self.plot_cost(avg_cost)
+        plot_learning_with_epochs(fpath=self.work_dir / 'learning_curve.png', training=tr_losses)
+        plot_cost(avg_cost, fpath=self.work_dir / 'cost.png')
 
     def _sample_model_for_eval(self, nsamples) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         vector_mat = np.stack(self.input_vectors, axis=0)
@@ -509,8 +526,10 @@ class AutoRegSearch(LoggingBase):
         accuracy_list, times, div_list = [], [], []
 
         if self.ndim == 2:
-            _, sample_ids, _ = self._sample_model_for_eval(nsamples)
-            plt_hist2D(self.input_vectors, sample_ids,
+            xsamples, _, _ = self._sample_model_for_eval(nsamples)
+            s = self.input_scale
+            _range = np.array([[-s, s], [-s, s]])
+            plt_hist2D(xsamples, range=_range,
                        fpath=self.work_dir / get_full_name('trained_policy'), cmap='binary')
 
         for iter_id in range(ntimes):
@@ -535,22 +554,22 @@ class AutoRegSearch(LoggingBase):
               f'accuracy_std = {100 * np.std(accuracy_list).astype("float"):.6f}, '
               f'solution diversity = {np.mean(div_list).astype("float"):.6f}')
 
+    def load_and_sample_ids(self, nsamples) -> np.ndarray:
+        """sets up the model (i.e. initializes the weights .etc) and generates samples"""
+        self.setup_model()
+        self.setup_model_state()
+        _, sample_ids = self.sample_model(nsamples)
+        return sample_ids.to(self.cpu).data.numpy().astype('int')
+
     def plot_model_sol_pca(self, nsamples=100):
-        ax = plt.gca()
         xsample, sample_ids, fval = self._sample_model_for_eval(nsamples)
         if self.mode == 'le':
             pos_samples = xsample[fval <= self.goal]
         else:
             pos_samples = xsample[fval >= self.goal]
-
-        plot_pca_2d(pos_samples, ax)
-        plt.savefig(self.work_dir / f'pca_sol.png')
-        plt.close()
+        plot_pca_2d(pos_samples, fpath=self.work_dir / f'pca_sol.png')
 
     def check_solutions(self, ntimes=1, nsamples=1000):
-        self.setup_model()
-        self.setup_model_state()
-
         print('-------- REPORT --------')
         self.check_random_solutions(ntimes, nsamples)
         self.report_accuracy(ntimes, nsamples)
@@ -565,7 +584,7 @@ class AutoRegSearch(LoggingBase):
         random_policy.check_solutions(ntimes, nsamples)
 
     def main(self) -> None:
-        self.check_random_solutions(ntimes=10, nsamples=1000)
+        self.check_random_solutions(ntimes=10, nsamples=10)
         input('Press Enter To continue:')
         self._run_alg()
-        self.check_solutions(ntimes=10, nsamples=1000)
+        self.check_solutions(ntimes=3, nsamples=100)

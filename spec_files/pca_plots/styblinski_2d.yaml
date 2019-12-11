@@ -1,0 +1,10 @@
+root_dir: data
+nsamples: 100
+prefix: 'styblinksi_2d'
+models:
+    policy_s10: search_fig_20191206085140_styblinski_2d_niter150_s20
+    policy_s20: search_fig_20191127172628_styblinski_2d_niter150_s10
+    cem_kde_s10: cem_kde_20191203142321_2d_iter100
+    cem_kde_s20: cem_kde_20191210191626_2d_iter100_s20
+    cem_guass_s10: cem_gauss_20191203142750_2d_iter100
+    cem_guass_s20: cem_gauss_20191210191148_2d_iter100_s20

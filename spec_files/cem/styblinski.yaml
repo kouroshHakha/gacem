@@ -1,6 +1,10 @@
-alg_class: optnet.alg.autoregressive.cont_autoreg_optim.CEMSearch
+alg_class: optnet.alg.cross_entropy.cem_optim.CEMSearch
 root_dir: data
 params:
+  prefix: cem_kde
+  suffix: 2d_iter100_s20
+  seed: 20
+  ndim: 2
   base_fn: kde
   cut_off: 0.4
   fn: styblinski
@@ -8,7 +12,6 @@ params:
   input_scale: 5.0
   mode: le
   n_init_samples: 20
-  ndim: 10
-  niter: 1000
+  niter: 100
   nsamples: 5
   num_input_points: 100

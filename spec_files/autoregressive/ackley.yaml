@@ -1,0 +1,25 @@
+alg_class: optnet.alg.autoregressive.cont_autoreg_optim.AutoRegSearch
+root_dir: data
+params:
+  prefix: cont_autoreg
+  suffix: ackley_2d_niter150_s10
+  seed: 10
+  ndim: 2
+  goal_value: 4
+  hidden_list: [20, 20, 20]
+  mode: le
+  batch_size: 16
+  nepochs: 5
+  nsamples: 5
+  n_init_samples: 20
+  init_nepochs: 50
+  cut_off: 0.4
+  niter: 150
+  lr: 5e-4
+  beta: 1
+  base_fn: normal
+  nr_mix: 5
+  only_positive: True
+  full_training_last: False
+  input_scale: 5.0
+  eval_fn: ackley

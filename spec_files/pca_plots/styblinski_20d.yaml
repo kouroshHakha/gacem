@@ -1,0 +1,7 @@
+root_dir: data
+nsamples: 100
+prefix: 'styblinksi_20d'
+models:
+    s10: search_fig_20191203080852_styblinski_20d_niter1700_s10_nr_mix40_ul200
+    s20: search_fig_20191203085835_styblinski_20d_niter1700_s20_nr_mix40_ul200
+    s30: search_fig_20191203085853_styblinski_20d_niter1700_s30_nr_mix40_ul200

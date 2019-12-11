@@ -12,4 +12,4 @@ data/*
 # tesorflow
 *.tfevents*
 
-spec_files
+#spec_files

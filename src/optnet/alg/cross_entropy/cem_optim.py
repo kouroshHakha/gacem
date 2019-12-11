@@ -5,7 +5,6 @@ import random
 import time
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import gaussian_kde
 from scipy.stats import multivariate_normal
@@ -16,7 +15,7 @@ from utils.loggingBase import LoggingBase
 from ...benchmarks.functions import registered_functions
 from ...benchmarks.fom import get_diversity_fom, compute_emprical_variation
 from ...data.buffer import CacheBuffer
-from ...viz.viz import plot_pca_2d, plt_hist2D
+from ...viz.plot import plot_pca_2d, plt_hist2D, plot_cost
 from ...data.vector import index_to_xval
 
 class CEM:
@@ -94,9 +93,9 @@ class CEMSearch(LoggingBase):
         else:
             unique_name = time.strftime('%Y%m%d%H%M%S')
             suffix = params.get('suffix', '')
-            if suffix:
-                unique_name += f'_{suffix}'
-            self.work_dir = Path(specs['root_dir']) / f'cont_autoreg_{unique_name}'
+            prefix = params.get('prefix', '')
+            unique_name = get_full_name(unique_name, prefix, suffix)
+            self.work_dir = Path(specs['root_dir']) / f'{unique_name}'
             write_yaml(self.work_dir / 'params.yaml', specs, mkdir=True)
 
         self.load = load
@@ -112,7 +111,7 @@ class CEMSearch(LoggingBase):
         self.goal = params['goal_value']
         self.mode = params['mode']
 
-        eval_fn = params['eval_fn']
+        eval_fn = params['fn']
         try:
             fn = registered_functions[eval_fn]
             self.fn = fn
@@ -144,15 +143,6 @@ class CEMSearch(LoggingBase):
         scores = np.maximum(err, 0)
         return scores
 
-    def plot_cost(self, avg_cost):
-        plt.close()
-        plt.plot(avg_cost)
-        plt.title('samples mean')
-        plt.xlabel('iter')
-        plt.ylabel('avg_cost')
-        plt.savefig(self.work_dir / 'cost.png')
-        plt.close()
-
     def save_checkpoint(self, iter_cnt, avg_cost):
         dict_to_save = dict(
             iter_cnt=iter_cnt,
@@ -176,7 +166,7 @@ class CEMSearch(LoggingBase):
         n_collected = 0
         new_samples = []
         while n_collected < n:
-            samples = self.cem.sample(n - n_collected)
+            samples = self.sample_model(n - n_collected)
             xsamples = index_to_xval(self.input_vectors, samples)
             for xsample, sample in zip(xsamples, samples):
                 if xsample not in self.buffer:
@@ -205,8 +195,12 @@ class CEMSearch(LoggingBase):
 
         # plot exploration
         if self.ndim == 2:
-            fpath = get_full_name(name='dist', prefix='training', suffix=f'{iter_cnt}_before')
-            plt_hist2D(self.input_vectors, samples, fpath=fpath, cmap='binary')
+            fpath = self.work_dir / get_full_name(name='dist', prefix='training',
+                                                  suffix=f'{iter_cnt}_before')
+            s = self.input_scale
+            _range = np.array([[-s, s], [-s, s]])
+            plt_hist2D(index_to_xval(self.input_vectors, samples), fpath=fpath, range=_range,
+                       cmap='binary')
 
         return top_samples
 
@@ -221,22 +215,39 @@ class CEMSearch(LoggingBase):
             self.cem.fit(top_samples)
             if self.ndim == 2:
                 xdata_ind = self.cem.sample(1000)
-                fpath = get_full_name(name='dist', prefix='training', suffix=f'0_after')
-                plt_hist2D(self.input_vectors, xdata_ind, fpath=fpath, cmap='binary')
+                fpath = self.work_dir / get_full_name(name='dist', prefix='training',
+                                                      suffix=f'0_after')
+                s = self.input_scale
+                _range = np.array([[-s, s], [-s, s]])
+                plt_hist2D(index_to_xval(self.input_vectors, xdata_ind), fpath=fpath,
+                           range=_range, cmap='binary')
 
         return iter_cnt, avg_cost
+
+    def sample_model(self, nsamples: int):
+        sample_ids = self.cem.sample(nsamples)
+        return sample_ids
+
+    def load_and_sample_ids(self, nsamples) -> np.ndarray:
+        """sets up the model and generates samples"""
+        self.setup_state()
+        sample_ids = self.sample_model(nsamples)
+        return sample_ids
 
     def report_accuracy(self, ntimes, nsamples):
         accuracy_list, times, div_list = [], [], []
 
         if self.ndim == 2:
-            sample_ids = self.cem.sample(nsamples)
-            plt_hist2D(self.input_vectors, sample_ids, fpath=self.work_dir / 'trained_policy',
-                       cmap='binary')
+            sample_ids = self.sample_model(nsamples)
+            s = self.input_scale
+            _range = np.array([[-s, s], [-s, s]])
+            plt_hist2D(index_to_xval(self.input_vectors, sample_ids),
+                       fpath=self.work_dir / 'trained_policy',
+                       range=_range, cmap='binary')
 
         for iter_id in range(ntimes):
             s = time.time()
-            sample_ids = self.cem.sample(nsamples)
+            sample_ids = self.sample_model(nsamples)
             xsample = index_to_xval(self.input_vectors, sample_ids)
             fval: np.ndarray = self.fn(xsample)
             if self.mode == 'le':
@@ -258,9 +269,8 @@ class CEMSearch(LoggingBase):
               f'accuracy_std = {100 * np.std(accuracy_list).astype("float"):.6f}, '
               f'solution diversity = {np.mean(div_list).astype("float"):.6f}')
 
-
     def report_variation(self, nsamples):
-        sample_ids = self.cem.sample(nsamples)
+        sample_ids = self.sample_model(nsamples)
         xsample = index_to_xval(self.input_vectors, sample_ids)
         fval = self.fn(xsample)
 
@@ -277,29 +287,21 @@ class CEMSearch(LoggingBase):
             raise ValueError('did not find any satisfying solutions!')
         print(f'pos solution variation / dim = {pos_var:.6f}')
 
-    def check_solutions(self, ntimes=1, nsamples=1000, init_seed=10):
-        self.set_seed(init_seed)
-
-        self.setup_state()
-
+    def check_solutions(self, ntimes=1, nsamples=1000):
         print('-------- REPORT --------')
         self.report_accuracy(ntimes, nsamples)
         self.report_variation(nsamples)
         self.plot_solution_space(nsamples=1000)
 
     def plot_solution_space(self, nsamples=100):
-        ax = plt.gca()
-        sample_ids = self.cem.sample(nsamples)
+        sample_ids = self.sample_model(nsamples)
         xsample = index_to_xval(self.input_vectors, sample_ids)
         fval = self.fn(xsample)
         if self.mode == 'le':
             pos_samples = xsample[fval <= self.goal]
         else:
             pos_samples = xsample[fval >= self.goal]
-
-        plot_pca_2d(pos_samples, ax)
-        plt.savefig(self.work_dir / f'pca_sol.png')
-        plt.close()
+        plot_pca_2d(pos_samples, fpath=self.work_dir / f'pca_sol.png')
 
     def _run_alg(self):
         iter_cnt, avg_cost = self.setup_state()
@@ -312,13 +314,17 @@ class CEMSearch(LoggingBase):
             self.cem.fit(top_samples)
 
             if (iter_cnt + 1) % 10 == 0 and self.ndim == 2:
-                xdata_ind = self.cem.sample(1000)
-                fpath = get_full_name(name='dist', prefix='training', suffix=f'{iter_cnt+1}_after')
-                plt_hist2D(self.input_vectors, xdata_ind, fpath=fpath, cmap='binary')
+                xdata_ind = self.sample_model(1000)
+                fpath = self.work_dir / get_full_name(name='dist', prefix='training',
+                                                      suffix=f'{iter_cnt+1}_after')
+                s = self.input_scale
+                _range = np.array([[-s, s], [-s, s]])
+                plt_hist2D(index_to_xval(self.input_vectors, xdata_ind),
+                           fpath=fpath, range=_range, cmap='binary')
             iter_cnt += 1
             self.save_checkpoint(iter_cnt, avg_cost)
 
-        self.plot_cost(avg_cost)
+        plot_cost(avg_cost, fpath=self.work_dir / 'cost.png')
 
     def main(self):
         self._run_alg()

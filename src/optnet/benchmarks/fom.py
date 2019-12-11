@@ -21,5 +21,5 @@ def get_diversity_fom(ndim, data, return_pca=False):
 
     vec = pca.explained_variance_ratio_
     div = (-vec * np.log(vec)).sum(-1) * pca.explained_variance_.sum(-1)
-
+    div /= ndim
     return div
