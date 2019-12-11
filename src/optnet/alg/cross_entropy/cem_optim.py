@@ -1,4 +1,4 @@
-from typing import Optional, Mapping, Any
+from typing import Optional, Mapping, Any, Tuple
 
 import pickle
 import random
@@ -228,11 +228,34 @@ class CEMSearch(LoggingBase):
         sample_ids = self.cem.sample(nsamples)
         return sample_ids
 
-    def load_and_sample_ids(self, nsamples) -> np.ndarray:
+    def _sample_model_for_eval(self, nsamples) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        sample_ids = self.sample_model(nsamples)
+        samples = index_to_xval(self.input_vectors, sample_ids)
+        fval = self.fn(samples)
+        return samples, sample_ids, fval
+
+    def load_and_sample(self, nsamples, only_positive=False) -> np.ndarray:
         """sets up the model and generates samples"""
         self.setup_state()
-        sample_ids = self.sample_model(nsamples)
-        return sample_ids
+        samples, _, fvals = self._sample_model_for_eval(nsamples)
+
+        if not only_positive:
+            return samples
+
+        n_remaining = nsamples
+        ans_list = []
+        while n_remaining > 0:
+            if self.mode == 'le':
+                pos_samples = samples[fvals <= self.goal]
+            else:
+                pos_samples = samples[fvals >= self.goal]
+            ans_list.append(pos_samples)
+            n_remaining -= len(pos_samples)
+            if n_remaining > 0:
+                xsample, _, fval = self._sample_model_for_eval(n_remaining)
+        ans = np.concatenate(ans_list, axis=0)
+
+        return ans
 
     def report_accuracy(self, ntimes, nsamples):
         accuracy_list, times, div_list = [], [], []

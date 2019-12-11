@@ -1,5 +1,6 @@
 from typing import Optional, Mapping, Union
 from sklearn.decomposition.pca import PCA
+from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
 import numpy as np
 import warnings
@@ -148,7 +149,7 @@ def plot_cost(avg_cost, ax=None, fpath='', show_fig=False):
 
 def scatter2D(data: np.ndarray, labels: Optional[np.ndarray] = None,
               label_mapping: Optional[Mapping[int, str]] = None,
-              ax=None, fpath='', show_fig=False, **kwargs):
+              ax=None, fpath='', show_fig=False, fig_title=None, **kwargs):
     ax = _get_ax(ax)
     if labels is not None:
         for label in np.unique(labels):
@@ -162,12 +163,22 @@ def scatter2D(data: np.ndarray, labels: Optional[np.ndarray] = None,
         ax.scatter(data[:, 0], data[:, 1], **kwargs)
 
     ax.legend()
+    if fig_title is None:
+        ax.set_title(fig_title)
     _save_show_fig(fpath, show_fig, dpi=400)
 
 def pca_scatter2D(data: np.ndarray, labels: Optional[np.ndarray] = None,
                   label_mapping: Optional[Mapping[int, str]] = None,
-                  ax=None, fpath='', show_fig=False, **kwargs):
+                  ax=None, fpath='', show_fig=False, title=None, **kwargs):
 
     pca_2d = PCA(n_components=2)
     data_hat = pca_2d.fit_transform(data)
-    scatter2D(data_hat, labels, label_mapping, ax, fpath, show_fig, **kwargs)
+    scatter2D(data_hat, labels, label_mapping, ax, fpath, show_fig, title, **kwargs)
+
+def tsne_scatter2D(data: np.ndarray, labels: Optional[np.ndarray] = None,
+                   label_mapping: Optional[Mapping[int, str]] = None,
+                   seed: Optional[int] = None,
+                   ax=None, fpath='', show_fig=False, title=None, **kwargs):
+
+    data_hat = TSNE(n_components=2, random_state=seed).fit_transform(data)
+    scatter2D(data_hat, labels, label_mapping, ax, fpath, show_fig, title, **kwargs)

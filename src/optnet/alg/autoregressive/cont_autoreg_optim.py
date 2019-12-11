@@ -499,10 +499,9 @@ class AutoRegSearch(LoggingBase):
         plot_cost(avg_cost, fpath=self.work_dir / 'cost.png')
 
     def _sample_model_for_eval(self, nsamples) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        vector_mat = np.stack(self.input_vectors, axis=0)
         _, sample_ids = self.sample_model(nsamples)
         sample_ids_arr = sample_ids.long().to(torch.device('cpu')).numpy()
-        xsample_arr = vector_mat[np.arange(self.ndim), sample_ids_arr]
+        xsample_arr = index_to_xval(self.input_vectors, sample_ids_arr)
         fval = self.fn(xsample_arr)
         return xsample_arr, sample_ids_arr, fval
 
@@ -554,12 +553,29 @@ class AutoRegSearch(LoggingBase):
               f'accuracy_std = {100 * np.std(accuracy_list).astype("float"):.6f}, '
               f'solution diversity = {np.mean(div_list).astype("float"):.6f}')
 
-    def load_and_sample_ids(self, nsamples) -> np.ndarray:
+    def load_and_sample(self, nsamples, only_positive=False) -> np.ndarray:
         """sets up the model (i.e. initializes the weights .etc) and generates samples"""
         self.setup_model()
         self.setup_model_state()
-        _, sample_ids = self.sample_model(nsamples)
-        return sample_ids.to(self.cpu).data.numpy().astype('int')
+        xsample, _, fval = self._sample_model_for_eval(nsamples)
+        if not only_positive:
+            return xsample
+
+        n_remaining = nsamples
+        ans_list = []
+        while n_remaining > 0:
+            if self.mode == 'le':
+                pos_samples = xsample[fval <= self.goal]
+            else:
+                pos_samples = xsample[fval >= self.goal]
+            ans_list.append(pos_samples)
+            n_remaining -= len(pos_samples)
+            print(f"sampled {len(pos_samples)} pos_solutions, n_remaining: {n_remaining}")
+            if n_remaining > 0:
+                xsample, _, fval = self._sample_model_for_eval(n_remaining)
+        ans = np.concatenate(ans_list, axis=0)
+
+        return ans
 
     def plot_model_sol_pca(self, nsamples=100):
         xsample, sample_ids, fval = self._sample_model_for_eval(nsamples)
