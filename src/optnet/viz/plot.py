@@ -6,6 +6,7 @@ import numpy as np
 import warnings
 from pathlib import Path
 from mpl_toolkits import mplot3d
+import itertools
 
 from ..alg.utils.weight_compute import weight
 
@@ -114,14 +115,12 @@ def plot_fn2d(x1, x2, fn, ax=None, fpath='', show_fig=False, **kwargs):
 
     _save_show_fig(fpath, show_fig)
 
-
-
 def plot_pca_2d(data, ax=None, fpath='', show_fig=False):
     ax = _get_ax(ax)
 
     pca_2d = PCA(n_components=2)
     data_hat = pca_2d.fit_transform(data)
-    ax.scatter(data_hat[:,0], data_hat[:,1])
+    ax.scatter(data_hat[:, 0], data_hat[:, 1])
     _save_show_fig(fpath, show_fig)
 
     return pca_2d
@@ -147,10 +146,13 @@ def plot_cost(avg_cost, ax=None, fpath='', show_fig=False):
     ax.set_ylabel('avg_cost')
     _save_show_fig(fpath, show_fig)
 
-def scatter2D(data: np.ndarray, labels: Optional[np.ndarray] = None,
+def scatter2d(data: np.ndarray, labels: Optional[np.ndarray] = None,
               label_mapping: Optional[Mapping[int, str]] = None,
               ax=None, fpath='', show_fig=False, fig_title=None, **kwargs):
     ax = _get_ax(ax)
+    markers = (',', '+', '.', 'o', '*')
+    colors = ('r', 'g', 'b', 'c', 'm', 'y', 'k')
+    marker_color = itertools.product(markers, colors)
     if labels is not None:
         for label in np.unique(labels):
             pos = (labels == label)
@@ -158,27 +160,29 @@ def scatter2D(data: np.ndarray, labels: Optional[np.ndarray] = None,
                 _label = label
             else:
                 _label = label_mapping[label]
-            ax.scatter(data[pos, 0], data[pos, 1], label=_label, **kwargs)
+            marker, color = next(marker_color)
+            ax.scatter(data[pos, 0], data[pos, 1], marker=marker, color=color,
+                       label=_label, **kwargs)
     else:
-        ax.scatter(data[:, 0], data[:, 1], **kwargs)
+        ax.scatter(data[:, 0], data[:, 1], marker='o', **kwargs)
 
-    ax.legend()
+    ax.legend(bbox_to_anchor=(1.04, 1), loc='upper left')
     if fig_title is None:
         ax.set_title(fig_title)
-    _save_show_fig(fpath, show_fig, dpi=400)
+    _save_show_fig(fpath, show_fig, dpi=400, bbox_inches="tight")
 
-def pca_scatter2D(data: np.ndarray, labels: Optional[np.ndarray] = None,
+def pca_scatter2d(data: np.ndarray, labels: Optional[np.ndarray] = None,
                   label_mapping: Optional[Mapping[int, str]] = None,
                   ax=None, fpath='', show_fig=False, title=None, **kwargs):
 
     pca_2d = PCA(n_components=2)
     data_hat = pca_2d.fit_transform(data)
-    scatter2D(data_hat, labels, label_mapping, ax, fpath, show_fig, title, **kwargs)
+    scatter2d(data_hat, labels, label_mapping, ax, fpath, show_fig, title, **kwargs)
 
-def tsne_scatter2D(data: np.ndarray, labels: Optional[np.ndarray] = None,
+def tsne_scatter2d(data: np.ndarray, labels: Optional[np.ndarray] = None,
                    label_mapping: Optional[Mapping[int, str]] = None,
                    seed: Optional[int] = None,
                    ax=None, fpath='', show_fig=False, title=None, **kwargs):
 
     data_hat = TSNE(n_components=2, random_state=seed).fit_transform(data)
-    scatter2D(data_hat, labels, label_mapping, ax, fpath, show_fig, title, **kwargs)
+    scatter2d(data_hat, labels, label_mapping, ax, fpath, show_fig, title, **kwargs)

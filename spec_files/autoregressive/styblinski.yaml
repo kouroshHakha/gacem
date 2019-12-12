@@ -2,11 +2,11 @@ alg_class: optnet.alg.autoregressive.cont_autoreg_optim.AutoRegSearch
 root_dir: data
 params:
   prefix: cont_autoreg
-  suffix: styblinski_20d_niter1700_s10_b10_nrmix40
-  seed: 10
+  suffix: styblinski_20d_niter1700_s30_b5_nrmix40_lay3
+  seed: 30
   ndim: 20
   goal_value: 20
-  hidden_list: [200, 200, 200, 200]
+  hidden_list: [200, 200, 200]
   mode: le
   batch_size: 16
   nepochs: 5
@@ -16,7 +16,7 @@ params:
   cut_off: 0.4
   niter: 1700
   lr: 5e-4
-  beta: 10
+  beta: 5
   base_fn: normal
   nr_mix: 40
   only_positive: True
