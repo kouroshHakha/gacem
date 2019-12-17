@@ -5,7 +5,8 @@ import argparse
 from utils.pdb import register_pdb_hook
 from utils.importlib import import_class
 from utils.file import read_yaml
-from utils.loggingBase import LoggingBase
+
+from optnet.alg.base import AlgBase
 
 register_pdb_hook()
 
@@ -28,6 +29,6 @@ if __name__ == '__main__':
 
     specs = read_yaml(fpath)
     alg_cls_str = specs.pop('alg_class')
-    alg_cls = cast(Type[LoggingBase], import_class(alg_cls_str))
+    alg_cls = cast(Type[AlgBase], import_class(alg_cls_str))
     alg = alg_cls(_args.spec_fpath, load=_args.load)
     alg.main()
