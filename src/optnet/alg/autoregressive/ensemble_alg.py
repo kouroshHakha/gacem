@@ -31,6 +31,8 @@ from ...viz.plot import (
     plot_pca_2d, plt_hist2D, plot_cost, plot_learning_with_epochs
 )
 
+import pdb
+
 class AutoRegSearch(AlgBase):
 
     def __init__(self, *args, **kwargs):
@@ -67,14 +69,14 @@ class AutoRegSearch(AlgBase):
         self.buffer = None
         self.opt = None
 
-        self.setup_model(params['models'])
-
         # hacky version of passing input vectors around
         self.input_vectors_norm = [np.linspace(start=-1.0, stop=1.0, dtype='float32',
                                                num=100) for _ in range(self.ndim)]
         self.input_vectors = [self.input_scale * vec for vec in self.input_vectors_norm]
         # TODO: remove this hacky way of keeping track of delta
         self.delta = self.input_vectors_norm[0][-1] - self.input_vectors_norm[0][-2]
+
+        self.setup_model(params['models'])
 
     def setup_model(self, model_params: List[Dict[str, Any]]):
         dim = self.ndim
@@ -85,6 +87,8 @@ class AutoRegSearch(AlgBase):
         params = self.specs['params']
         self.model: Ensemble = Ensemble(module_list, self.ndim, params['base_fn'], self.delta,
                                         params['beta'], seed=self.seed)
+
+        pdb.set_trace()
         self.opt = optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=0)
         self.buffer = CacheBuffer(self.mode, self.goal, self.cut_off)
 
