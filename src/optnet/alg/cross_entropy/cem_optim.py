@@ -330,6 +330,7 @@ class CEMSearch(LoggingBase):
         iter_cnt, avg_cost = self.setup_state()
 
         while iter_cnt < self.niter:
+            print(f'iter {iter_cnt}')
             self.collect_samples(self.nsamples)
             avg_cost.append(self.buffer.mean)
             top_samples = self.get_top_samples(iter_cnt+1)
