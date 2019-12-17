@@ -1,10 +1,10 @@
-alg_class: optnet.alg.autoregressive.ensemble.AutoRegSearch
+alg_class: optnet.alg.autoregressive.ensemble_alg.AutoRegSearch
 root_dir: data
 params:
   prefix: ens_autoreg
   suffix: styblinski_2d_niter150_s10_b1_nrmix5_lay3
-  model_params:
-    - hidden_list: [20, 20, 20]
+  models:
+    - hiddens: [20, 20, 20]
       nr_mix: 5
   seed: 10
   ndim: 2

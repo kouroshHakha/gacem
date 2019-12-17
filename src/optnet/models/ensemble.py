@@ -1,7 +1,7 @@
 """
 This module implements an ensemble model for cont_autoreg model
 """
-from typing import Tuple, List
+from typing import Tuple, List, Sized, Iterable, Optional
 
 import random
 
@@ -12,10 +12,37 @@ import torch.nn as nn
 from ..torch.dist import cdf_logistic, cdf_normal, cdf_uniform
 
 
+class ListModule(nn.Module, Sized, Iterable):
+    def __init__(self, *args):
+        super(ListModule, self).__init__()
+        idx = 0
+        for module in args:
+            self.add_module(str(idx), module)
+            idx += 1
+
+    def __getitem__(self, idx):
+        if idx < 0 or idx >= len(self._modules):
+            raise IndexError('index {} is out of range'.format(idx))
+        it = iter(self._modules.values())
+        for i in range(idx):
+            next(it)
+        return next(it)
+
+    def __iter__(self):
+        return iter(self._modules.values())
+
+    def __next__(self):
+        for i in range(len(self)):
+            return self[i]
+        raise StopIteration
+
+    def __len__(self) -> int:
+        return len(self._modules)
+
 class Ensemble(nn.Module):
 
     def __init__(self,
-                 modules: List[nn.Module],
+                 models: List[nn.Module],
                  ndim: int,
                  base_fn: str,
                  delta: float,
@@ -23,11 +50,11 @@ class Ensemble(nn.Module):
                  seed: int = 10,
                  ):
         # randomize models in ensemble using different seeds
-        super(Ensemble).__init__()
+        super(Ensemble, self).__init__()
 
-        self.modules = modules
+        self.models: ListModule = ListModule(*models)
 
-        num_modules = len(modules)
+        num_modules = len(models)
         self.devices = []
         if not torch.cuda.is_available():
             self.devices = [torch.device('cpu')] * num_modules
@@ -37,7 +64,7 @@ class Ensemble(nn.Module):
                 self.devices.append(device)
 
         # initialize models, even if they are initialized already
-        for i, (model, device) in enumerate(zip(self.modules, self.devices)):
+        for i, (model, device) in enumerate(zip(iter(self.models), self.devices)):
             model.to(device)
             if torch.cuda.is_available():
                 # noinspection PyUnresolvedReferences
@@ -64,7 +91,7 @@ class Ensemble(nn.Module):
         torch.manual_seed(seed)
 
     def forward(self, x):
-        y_list = [model(x.to(device)) for model, device in zip(self.modules, self.devices)]
+        y_list = [model(x.to(device)) for model, device in zip(iter(self.models), self.devices)]
         y = torch.stack(y_list, -1)
         return y.mean(-1)
 
@@ -72,10 +99,10 @@ class Ensemble(nn.Module):
         """Given an input tensor (N, dim) computes the probabilities across the cardinality space
         of each dimension. prob.shape = (N, dim, K) where K is number of possible values for each
         dimension. Assume that xin is normalized to [-1,1], and delta is given."""
-        n_modules = len(self.modules)
-        rnd_index = random.randint(n_modules)
+        n_modules = len(self.models)
+        rnd_index = random.randrange(n_modules)
 
-        model = self.modules[rnd_index]
+        model = self.models[rnd_index]
         device = self.devices[rnd_index]
         xin = xin.to(device)
         xhat = model(xin)
@@ -140,17 +167,17 @@ class Ensemble(nn.Module):
 
         return probs
 
-    def get_nll(self, xin: torch.Tensor, weights=None):
+    def get_nll(self, xin: torch.Tensor, weights: Optional[torch.Tensor] = None):
         """Given an input tensor computes the average negative likelihood of observing the inputs"""
         probs = self.get_probs(xin)
         eps_tens = 1e-15
         logp_vec = (probs + eps_tens).log10().sum(-1)
+        weights = weights.to(logp_vec.device)
 
         if weights is None:
             min_obj = -logp_vec.mean(-1)
         else:
             pos_ind = (weights > 0).float()
-            # neg_ind = 1 - pos_ind
 
             obj_term  = - weights.data
             ent_term = (self.beta * (1 + logp_vec)).data
@@ -162,11 +189,6 @@ class Ensemble(nn.Module):
             npos = 1 if npos == 0 else npos
             pos_main_obj = (main_obj * pos_ind).sum(-1) / npos
             pos_ent_obj = (ent_obj * pos_ind).sum(-1) / npos
-
-            # nneg = neg_ind.sum(-1)
-            # nneg = 1 if nneg == 0 else nneg
-            # neg_main_obj = (main_obj * neg_ind).sum(-1) / nneg
-            # neg_ent_obj = (ent_obj * neg_ind).sum(-1) / nneg
 
             min_obj = (pos_main_obj + pos_ent_obj) / self.ndim
 

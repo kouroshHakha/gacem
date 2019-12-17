@@ -88,7 +88,6 @@ class AutoRegSearch(AlgBase):
         self.model: Ensemble = Ensemble(module_list, self.ndim, params['base_fn'], self.delta,
                                         params['beta'], seed=self.seed)
 
-        pdb.set_trace()
         self.opt = optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=0)
         self.buffer = CacheBuffer(self.mode, self.goal, self.cut_off)
 
@@ -100,8 +99,7 @@ class AutoRegSearch(AlgBase):
         # noinspection PyUnresolvedReferences
         torch.cuda.manual_seed_all(seed)
 
-    def run_epoch(self, data: np.ndarray, weights: np.ndarray, mode='train',
-                  debug=False):
+    def run_epoch(self, data: np.ndarray, weights: np.ndarray, mode='train'):
         self.model.train() if mode == 'train' else self.model.eval()
 
         n, dim,  _ = data.shape
@@ -120,7 +118,7 @@ class AutoRegSearch(AlgBase):
             wb_tens = torch.from_numpy(wb)
 
             xin = xb_tens[:, 0, :]
-            loss = self.model.get_nll(xin, weights=wb_tens, debug=debug)
+            loss = self.model.get_nll(xin, weights=wb_tens)
             if mode == 'train':
                 self.opt.zero_grad()
                 loss.backward()
@@ -373,7 +371,7 @@ class AutoRegSearch(AlgBase):
         random_policy.check_solutions(ntimes, nsamples)
 
     def main(self) -> None:
-        self.check_random_solutions(ntimes=10, nsamples=10)
+        # self.check_random_solutions(ntimes=10, nsamples=10)
         input('Press Enter To continue:')
         self._run_alg()
         self.check_solutions(ntimes=3, nsamples=100)
