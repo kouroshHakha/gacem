@@ -179,7 +179,8 @@ class Ensemble(nn.Module):
 
         return probs
 
-    def get_nll(self, xin: torch.Tensor, weights: Optional[torch.Tensor] = None):
+    def get_nll(self, xin: torch.Tensor, weights: Optional[torch.Tensor] = None,
+                ll_type = 'logp'):
         """Given an input tensor computes the average negative likelihood of observing the inputs"""
         min_objs = []
         n_modules = len(self.models)
@@ -189,12 +190,18 @@ class Ensemble(nn.Module):
             probs = self.get_probs(xin, model_index=i)
             eps_tens = 1e-15
             logp_vec = (probs + eps_tens).log10().sum(-1)
-            w_tens = weights.to(logp_vec, copy=True)
+            log_pp_vec = (1-probs+eps_tens).log10().sum(-1)
 
-            if w_tens is None:
+            if ll_type is not 'logp':
+                min_obj = -log_pp_vec.mean(-1)
+                min_objs.append(min_obj)
+                continue
+
+            if weights is None:
                 min_obj = -logp_vec.mean(-1)
                 min_objs.append(min_obj)
             else:
+                w_tens = weights.to(logp_vec, copy=True)
                 pos_ind = (w_tens > 0).float()
 
                 obj_term  = - w_tens.data

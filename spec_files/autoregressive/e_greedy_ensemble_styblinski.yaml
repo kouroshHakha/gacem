@@ -1,0 +1,32 @@
+alg_class: optnet.alg.autoregressive.ens_e_greedy.AutoRegSearch
+root_dir: data
+params:
+  prefix: e_greedy_ens_autoreg
+#  suffix: styblinski_20d_niter1000_s30_b1_nrmix40_lay3x200_e5
+  suffix: styblinski_2d_niter200_s10_b1_nrmix15_lay3x50_e1_snep40_epsr1p3
+  models:
+    - hiddens: [50, 50, 50]
+      nr_mix: 15
+  models_u:
+    - hiddens: [50, 50, 50]
+      nr_mix: 15
+  seed: 10
+  ndim: 2
+  goal_value: 20
+  mode: le
+  batch_size: 16
+  nepochs: 1
+  nsamples: 5
+  snep: 40  # state novelty n_epoch 40
+  eps_decay_rate: 1.3
+  n_init_samples: 20
+  init_nepochs: 50
+  cut_off: 0.4
+  niter: 200
+  lr: 5e-4
+  l1_coef: 0
+  beta: 1
+  base_fn: normal
+  full_training_last: False
+  input_scale: 5.0
+  eval_fn: styblinski
