@@ -4,13 +4,16 @@ This module implements an ensemble model for cont_autoreg model
 from typing import Tuple, List, Sized, Iterable, Optional
 
 import random
-
 import numpy as np
+import GPUtil
 import torch
 import torch.nn as nn
 
 from ..torch.dist import cdf_logistic, cdf_normal, cdf_uniform
 
+import pdb
+# import os
+# os.environ['CUDA_LAUNCH_BLOCKING']='1'
 
 class ListModule(nn.Module, Sized, Iterable):
     def __init__(self, *args):
@@ -55,23 +58,27 @@ class Ensemble(nn.Module):
         self.models: ListModule = ListModule(*models)
 
         num_modules = len(models)
+        GPUtil.showUtilization()
+        availablity = GPUtil.getAvailability(GPUtil.getGPUs())
+        available_devices = [i for i in range(len(availablity)) if availablity[i] == 1]
+        self.cuda = (len(available_devices) > 0) # whether cuda is being used
         self.devices = []
-        if not torch.cuda.is_available():
+        if not self.cuda:
+            print('no cuda device was found, running on CPU')
             self.devices = [torch.device('cpu')] * num_modules
         else:
             for i in range(num_modules):
-                device = torch.device(f'cuda:{i % num_modules}')
+                device = torch.device(f'cuda:{available_devices[0]}')
+                # device = torch.device(f'cuda:{available_devices[i % len(available_devices)]}')
                 self.devices.append(device)
 
         # initialize models, even if they are initialized already
         for i, (model, device) in enumerate(zip(iter(self.models), self.devices)):
             model.to(device)
-            if torch.cuda.is_available():
-                # noinspection PyUnresolvedReferences
-                with torch.cuda.device(device.index):
-                    print(f'device {torch.cuda.current_device()} initialized')
-                    self.set_torch_seed(seed + 10 * i)
+            print(f'model {i} was move to device: {device}')
+            self.set_torch_seed(seed + 10 * i)
             model.apply(self.init_weights)
+            print(f'model {i} was initialized')
 
         self.ndim = ndim
         self.base_fn = base_fn
@@ -91,21 +98,18 @@ class Ensemble(nn.Module):
         torch.manual_seed(seed)
 
     def forward(self, x):
-        y_list = [model(x.to(device)) for model, device in zip(iter(self.models), self.devices)]
-        y = torch.stack(y_list, -1)
-        return y.mean(-1)
+        pass
 
-    def get_probs(self, xin: torch.Tensor):
+    def get_probs(self, xin: torch.Tensor, model_index=None):
         """Given an input tensor (N, dim) computes the probabilities across the cardinality space
         of each dimension. prob.shape = (N, dim, K) where K is number of possible values for each
         dimension. Assume that xin is normalized to [-1,1], and delta is given."""
-        n_modules = len(self.models)
-        rnd_index = random.randrange(n_modules)
-
-        model = self.models[rnd_index]
-        device = self.devices[rnd_index]
-        xin = xin.to(device)
-        xhat = model(xin)
+        if model_index is None:
+            raise ValueError('model index not specified')
+        model = self.models[model_index]
+        device = self.devices[model_index]
+        xin_device = xin.to(device, copy=True)
+        xhat = model(xin_device)
 
         # xhat=  self(xin)
         # device = self.devices[0]
@@ -119,8 +123,8 @@ class Ensemble(nn.Module):
         # solution: here they should be positive and should add up to 1, sounds familiar? softmax!
         coeffs_norm = coeffs.softmax(dim=-1)
 
-        eps = torch.tensor(1e-15)
-        xb = xin[..., None] + torch.zeros(coeffs.shape, device=device)
+        eps = 1e-15
+        xb = xin_device[..., None] + torch.zeros(coeffs.shape, device=device)
 
         if self.base_fn in ['logistic', 'normal']:
             means = torch.stack([xhat[..., i+dim::dim*3] for i in range(dim)], dim=-2)
@@ -155,7 +159,7 @@ class Ensemble(nn.Module):
         # -1 is mapped to (-inf, -1+d/2], 1 is mapped to [1-d/2, inf), and other 'i's are mapped to
         # [i-d/2, i+d/2)n
         probs_nonedge = plus_cdf - minus_cdf
-        probs_right_edge = torch.tensor(1) - minus_cdf
+        probs_right_edge = 1 - minus_cdf
         probs_left_edge = plus_cdf
 
         l_cond = xb <= (-1 + delta / 2)
@@ -169,33 +173,48 @@ class Ensemble(nn.Module):
 
     def get_nll(self, xin: torch.Tensor, weights: Optional[torch.Tensor] = None):
         """Given an input tensor computes the average negative likelihood of observing the inputs"""
-        probs = self.get_probs(xin)
-        eps_tens = 1e-15
-        logp_vec = (probs + eps_tens).log10().sum(-1)
-        weights = weights.to(logp_vec.device)
+        min_objs = []
+        n_modules = len(self.models)
+        for i in range(n_modules):
+            # if self.cuda:
+            #     torch.cuda.set_device(self.devices[i])
+            probs = self.get_probs(xin, model_index=i)
+            eps_tens = 1e-15
+            logp_vec = (probs + eps_tens).log10().sum(-1)
+            w_tens = weights.to(logp_vec, copy=True)
 
-        if weights is None:
-            min_obj = -logp_vec.mean(-1)
-        else:
-            pos_ind = (weights > 0).float()
+            if w_tens is None:
+                min_obj = -logp_vec.mean(-1)
+                min_objs.append(min_obj)
+            else:
+                pos_ind = (w_tens > 0).float()
 
-            obj_term  = - weights.data
-            ent_term = (self.beta * (1 + logp_vec)).data
+                obj_term  = - w_tens.data
+                ent_term = (self.beta * (1 + logp_vec)).data
 
-            main_obj = obj_term * logp_vec
-            ent_obj = ent_term * logp_vec
+                main_obj = obj_term * logp_vec
+                ent_obj = ent_term * logp_vec
 
-            npos = pos_ind.sum(-1)
-            npos = 1 if npos == 0 else npos
-            pos_main_obj = (main_obj * pos_ind).sum(-1) / npos
-            pos_ent_obj = (ent_obj * pos_ind).sum(-1) / npos
+                npos = pos_ind.sum(-1)
+                npos = 1 if npos == 0 else npos
+                pos_main_obj = (main_obj * pos_ind).sum(-1) / npos
+                pos_ent_obj = (ent_obj * pos_ind).sum(-1) / npos
 
-            min_obj = (pos_main_obj + pos_ent_obj) / self.ndim
+                min_sub_obj = (pos_main_obj + pos_ent_obj) / self.ndim
+                # use one of the devices as the central host for common computations
+                min_objs.append(min_sub_obj.to(self.devices[0]))
 
+        min_obj = torch.stack(min_objs, -1).mean(-1)
         return min_obj
 
+    @classmethod
+    def gen_n_numbers_with_sum(cls, n=5, sum=1):
+        ans = np.random.multinomial(sum, np.ones(n)/n, size=1)[0].tolist()
+        return ans
+
     def sample_model(self, nsamples: int, bsize: int,
-                     input_vectors_norm: List[np.ndarray]) -> Tuple[torch.Tensor, torch.Tensor]:
+                     input_vectors_norm: List[np.ndarray],
+                     model_index=None) -> Tuple[torch.Tensor, torch.Tensor]:
         """samples the current model nsamples times and returns both normalized samples i.e
         between [-1, 1] and sample indices
 
@@ -215,38 +234,46 @@ class Ensemble(nn.Module):
         """
         self.eval()
 
-        # synchronize operations on one device
-        device = self.devices[0]
+        n_modules = len(self.models)
+        device_shares = self.gen_n_numbers_with_sum(n_modules, nsamples)
+        index = random.randrange(n_modules) if model_index is None else model_index
+
         dim = self.ndim
         # GPU friendly sampling
-        total_niter = -(-nsamples // bsize)
-        xsample_list, xsample_ind_list = [], []
-        for iter_cnt in range(total_niter):
-            if iter_cnt == total_niter - 1:
-                bsize = nsamples - iter_cnt * bsize
-            else:
-                bsize = bsize
-            xsample = torch.zeros(bsize, dim, device=device)
-            xsample_ind = torch.zeros(bsize, dim, device=device)
-            for i in range(dim):
-                n = len(input_vectors_norm[i])
-                xin = torch.zeros(bsize, n, dim, device=device)
-                if i >= 1:
-                    xin = torch.stack([xsample] * n, dim=-2)
-                in_torch = torch.from_numpy(input_vectors_norm[i]).to(device)
-                xin[..., i] = torch.stack([in_torch] * bsize)
-                xin_reshaped = xin.view((bsize * n, dim))
-                probs_reshaped = self.get_probs(xin_reshaped)
-                probs = probs_reshaped.view((bsize, n, dim))
-                xi_ind = self.sample_probs(probs, i)  # ith x index
-                xsample[:, i] = xin[..., i][range(bsize), xi_ind]
-                xsample_ind[:, i] = xi_ind
-            xsample_ind_list.append(xsample_ind)
-            xsample_list.append(xsample)
-
-        xsample = torch.cat(xsample_list, dim=0)
-        xsample_ind = torch.cat(xsample_ind_list, dim=0)
-        return xsample, xsample_ind
+        samples, sample_ids = [], []
+        for i, (device, device_nsamp) in enumerate(zip(self.devices, device_shares)):
+            if device_nsamp == 0:
+                continue
+            # print(f'sampling {device_nsamp} samples from model {i}')
+            total_niter = -(-device_nsamp // bsize)
+            xsample_list, xsample_ind_list = [], []
+            for iter_cnt in range(total_niter):
+                if iter_cnt == total_niter - 1:
+                    bsize = device_nsamp - iter_cnt * bsize
+                else:
+                    bsize = bsize
+                xsample = torch.zeros(bsize, dim, device=device)
+                xsample_ind = torch.zeros(bsize, dim, device=device)
+                for i in range(dim):
+                    n = len(input_vectors_norm[i])
+                    xin = torch.zeros(bsize, n, dim, device=device)
+                    if i >= 1:
+                        xin = torch.stack([xsample] * n, dim=-2)
+                    in_torch = torch.from_numpy(input_vectors_norm[i]).to(device)
+                    xin[..., i] = torch.stack([in_torch] * bsize)
+                    xin_reshaped = xin.view((bsize * n, dim))
+                    probs_reshaped = self.get_probs(xin_reshaped, model_index=index)
+                    probs = probs_reshaped.view((bsize, n, dim))
+                    xi_ind = self.sample_probs(probs, i)  # ith x index
+                    xsample[:, i] = xin[..., i][range(bsize), xi_ind]
+                    xsample_ind[:, i] = xi_ind
+                xsample_ind_list.append(xsample_ind)
+                xsample_list.append(xsample)
+            samples.append(torch.cat(xsample_list, dim=0).to(self.devices[0]))
+            sample_ids.append(torch.cat(xsample_ind_list, dim=0).to(self.devices[0]))
+        samples = torch.cat(samples, dim=0)
+        sample_ids = torch.cat(sample_ids, dim=0)
+        return samples, sample_ids
 
     @classmethod
     def sample_probs(cls, probs: torch.Tensor, index: int):

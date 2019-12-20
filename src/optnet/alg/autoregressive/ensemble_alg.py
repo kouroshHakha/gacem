@@ -13,6 +13,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import GPUtil
 
 from utils.file import get_full_name
 
@@ -65,7 +66,7 @@ class AutoRegSearch(AlgBase):
         except KeyError:
             raise ValueError(f'{eval_fn} is not a valid benchmark function')
 
-        self.model: Optional[nn.Module] = None
+        self.model: Optional[Ensemble] = None
         self.buffer = None
         self.opt = None
 
@@ -118,7 +119,7 @@ class AutoRegSearch(AlgBase):
             wb_tens = torch.from_numpy(wb)
 
             xin = xb_tens[:, 0, :]
-            loss = self.model.get_nll(xin, weights=wb_tens)
+            loss = self.model.get_nll(xin, wb_tens)
             if mode == 'train':
                 self.opt.zero_grad()
                 loss.backward()
