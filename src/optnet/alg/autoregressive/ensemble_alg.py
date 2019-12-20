@@ -13,7 +13,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import GPUtil
 
 from utils.file import get_full_name
 
@@ -223,7 +222,7 @@ class AutoRegSearch(AlgBase):
         else:
             # collect samples using the random initial model (probably a bad initialization)
             self.model.eval()
-            self.collect_samples(self.n_init_samples) #, uniform=True)
+            self.collect_samples(self.n_init_samples)
             # train the init model
             self.model.train()
             self.train(0, self.n_init_samples)
