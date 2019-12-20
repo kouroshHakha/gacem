@@ -223,7 +223,7 @@ class AutoRegSearch(AlgBase):
         else:
             # collect samples using the random initial model (probably a bad initialization)
             self.model.eval()
-            self.collect_samples(self.n_init_samples, uniform=True)
+            self.collect_samples(self.n_init_samples) #, uniform=True)
             # train the init model
             self.model.train()
             self.train(0, self.n_init_samples)

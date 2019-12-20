@@ -136,11 +136,14 @@ class Ensemble(nn.Module):
             sigma = log_sigma.exp()
 
             if self.base_fn == 'logistic':
-                plus_cdf = cdf_logistic(xb + delta / 2, means, sigma)
-                minus_cdf = cdf_logistic(xb - delta / 2, means, sigma)
+                cdf_func = cdf_logistic
             else:
-                plus_cdf = cdf_normal(xb + delta / 2, means, sigma)
-                minus_cdf = cdf_normal(xb - delta / 2, means, sigma)
+                cdf_func = cdf_normal
+
+            plus_cdf = cdf_func(xb + delta / 2, means, sigma)
+            minus_cdf = cdf_func(xb - delta / 2, means, sigma)
+            right = cdf_func(torch.ones_like(xb), means, sigma)
+            left = cdf_func(-torch.ones_like(xb), means, sigma)
         elif self.base_fn == 'uniform':
             center = torch.stack([xhat[..., i+dim::dim*3] for i in range(dim)], dim=-2)
             # normalize center between [-1,1] to cover all the space
@@ -153,20 +156,25 @@ class Ensemble(nn.Module):
             b = center + bdelta / 2
             plus_cdf = cdf_uniform(xb + delta / 2, a, b)
             minus_cdf = cdf_uniform(xb - delta / 2, a, b)
+            right = cdf_uniform(torch.ones_like(xb), a, b)
+            left = cdf_uniform(-torch.ones_like(xb), a, b)
         else:
             raise ValueError(f'unsupported base_fn = {self.base_fn}')
 
         # -1 is mapped to (-inf, -1+d/2], 1 is mapped to [1-d/2, inf), and other 'i's are mapped to
         # [i-d/2, i+d/2)n
         probs_nonedge = plus_cdf - minus_cdf
-        probs_right_edge = 1 - minus_cdf
-        probs_left_edge = plus_cdf
+        probs_right_edge = right - minus_cdf
+        probs_left_edge = plus_cdf - left
 
         l_cond = xb <= (-1 + delta / 2)
         r_cond = xb >= (1 - delta / 2)
         n_cond = ~(l_cond | r_cond)
         cdfs = probs_left_edge * l_cond + probs_right_edge * r_cond + probs_nonedge * n_cond
 
+        cdfs = cdfs / (right - left + eps)
+        if torch.any(torch.isnan(cdfs)):
+            pdb.set_trace()
         probs = (coeffs_norm * cdfs).sum(-1)
 
         return probs
