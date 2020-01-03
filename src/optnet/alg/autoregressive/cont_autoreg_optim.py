@@ -126,7 +126,7 @@ class AutoRegSearch(LoggingBase):
         # solution: here they should be positive and should add up to 1, sounds familiar? softmax!
         coeffs_norm = coeffs.softmax(dim=-1)
 
-        eps = torch.tensor(1e-15)
+        eps = 1e-15
         xb = xin[..., None] + torch.zeros(coeffs.shape, device=self.device)
 
         if self.base_fn in ['logistic', 'normal']:
@@ -162,7 +162,7 @@ class AutoRegSearch(LoggingBase):
         # -1 is mapped to (-inf, -1+d/2], 1 is mapped to [1-d/2, inf), and other 'i's are mapped to
         # [i-d/2, i+d/2)n
         probs_nonedge = plus_cdf - minus_cdf
-        probs_right_edge = torch.tensor(1) - minus_cdf
+        probs_right_edge = 1 - minus_cdf
         probs_left_edge = plus_cdf
 
         l_cond = xb <= (-1 + delta / 2)
@@ -172,13 +172,6 @@ class AutoRegSearch(LoggingBase):
 
         probs = (coeffs_norm * cdfs).sum(-1)
 
-        # bar_grad = torch.autograd.grad(probs.flatten()[0], self.model.net[0].bias,
-        #                                retain_graph=True)[0]
-        # if torch.isnan(bar_grad[0]):
-        #     print(bar_grad)
-        #     print(cdfs)
-        #     pdb.set_trace()
-
         if debug:
             pdb.set_trace()
 
@@ -187,19 +180,19 @@ class AutoRegSearch(LoggingBase):
     def get_nll(self, xin: torch.Tensor, weights=None, debug=False):
         """Given an input tensor computes the average negative likelihood of observing the inputs"""
         probs = self.get_probs(xin)
-        eps_tens = torch.tensor(1e-15)
+        eps_tens = 1e-15
         logp_vec = (probs + eps_tens).log10().sum(-1)
 
         if weights is None:
             min_obj = -logp_vec.mean(-1)
         else:
             pos_ind = (weights > 0).float()
-            neg_ind = torch.tensor(1) - pos_ind
+            neg_ind = 1 - pos_ind
 
             # obj_term  = - self.buffer.size * (weights * prob_x).data
             # ent_term = self.buffer.size * (self.beta * (torch.tensor(1) + logp_vec)).data
             obj_term  = - weights.data
-            ent_term = (self.beta * (torch.tensor(1) + logp_vec)).data
+            ent_term = (self.beta * (1 + logp_vec)).data
 
             # coeff = (ent_term + obj_term) * pos_ind
             main_obj = obj_term * logp_vec
