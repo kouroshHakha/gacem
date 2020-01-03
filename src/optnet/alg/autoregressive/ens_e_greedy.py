@@ -101,7 +101,7 @@ class AutoRegSearch(AlgBase):
                                         params['beta'], seed=self.seed)
 
         self.model_unvisited: Ensemble = Ensemble(umodule_list, self.ndim, params['base_fn'],
-                                                  self.delta, params['beta'], seed=self.seed)
+                                                  self.delta, beta=0, seed=self.seed)
 
         self.opt = optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=0)
         self.opt_unvisited = optim.Adam(self.model_unvisited.parameters(), lr=self.lr)
