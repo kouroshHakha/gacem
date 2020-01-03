@@ -1,0 +1,21 @@
+alg_class: optnet.alg.cross_entropy.cem_optim.CEMSearch
+root_dir: data
+params:
+  prefix: cem_gauss
+  suffix: ackley_20d_iter100_s20_n250
+  seed: 20
+  ndim: 50
+  base_fn: gauss
+  cut_off: 0.4
+  fn: ackley
+  goal_value: 4
+  input_scale: 5.0
+  mode: le
+  n_init_samples: 50
+  niter: 1000
+  nsamples: 5
+  num_input_points: 100
+  allow_repeated: True
+  elite_criteria: 'csp'
+  on_policy: False
+  average_coeff: 1
