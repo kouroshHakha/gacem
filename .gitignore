@@ -13,3 +13,5 @@ data/*
 *.tfevents*
 
 #spec_files
+
+~$*
