@@ -189,26 +189,22 @@ class Ensemble(nn.Module):
             #     torch.cuda.set_device(self.devices[i])
             probs = self.get_probs(xin, model_index=i)
             eps_tens = 1e-15
-            logp_vec = (probs + eps_tens).log10().sum(-1)
-            log_pp_vec = (1-probs+eps_tens).log10().sum(-1)
-
+            ll_vec = (probs + eps_tens).log10().sum(-1)
             if ll_type is not 'logp':
-                min_obj = -log_pp_vec.mean(-1)
-                min_objs.append(min_obj)
-                continue
+                ll_vec = (1-probs+eps_tens).log10().sum(-1)
 
             if weights is None:
-                min_obj = -logp_vec.mean(-1)
+                min_obj = -ll_vec.mean(-1)
                 min_objs.append(min_obj)
             else:
-                w_tens = weights.to(logp_vec, copy=True)
+                w_tens = weights.to(ll_vec, copy=True)
                 pos_ind = (w_tens > 0).float()
 
                 obj_term  = - w_tens.data
-                ent_term = (self.beta * (1 + logp_vec)).data
+                ent_term = (self.beta * (1 + ll_vec)).data
 
-                main_obj = obj_term * logp_vec
-                ent_obj = ent_term * logp_vec
+                main_obj = obj_term * ll_vec
+                ent_obj = ent_term * ll_vec
 
                 npos = pos_ind.sum(-1)
                 npos = 1 if npos == 0 else npos
