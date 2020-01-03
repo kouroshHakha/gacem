@@ -135,10 +135,11 @@ class CacheBuffer:
             self._running_mean = new_mean
         return self._running_mean
 
-    def add_samples(self, new_samples: np.ndarray, new_ind: np.ndarray, fvals: np.ndarray):
+    def add_samples(self, new_samples: np.ndarray, new_ind: np.ndarray, fvals: np.ndarray,
+                    allow_repeated: bool = False):
         for item, item_ind, val in zip(new_samples, new_ind, fvals):
             element = CacheElement(item, item_ind, val)
-            if element not in self.db_set:
+            if element not in self.db_set or allow_repeated:
                 priority = val if self.mode == 'le' else -val
                 heapq.heappush(self.db_pq, (priority, hash(element)))
                 self.db_set[element] = element

@@ -4,8 +4,8 @@ import pickle
 import random
 import time
 from pathlib import Path
-
 import numpy as np
+import math
 from scipy.stats import gaussian_kde
 from scipy.stats import multivariate_normal
 
@@ -20,25 +20,40 @@ from ...data.vector import index_to_xval
 
 class CEM:
     """
-    The vanilla implementation of Cross Entropy method with gaussian distribution
+    The vanilla implementation of Cross Entropy method with gaussian distributions
     """
-    def __init__(self, input_vectors, dist_type='gaussian'):
+    def __init__(self, input_vectors, average_coeff, dist_type='gauss'):
+        """
+
+        Parameters
+        ----------
+        input_vectors: List[np.ndarray]
+            The possible values for each input dimension
+        dist_type: str
+            The Kernel type:
+                'guass' for single gaussian
+                'KDE' for kernel density estimation
+        average_coeff: float(not supported in KDE)
+            a number between 0,1: params = (1-alpha) * old_params + alpha * new_params
+        """
         self.input_indices = [range(len(x)) for x in input_vectors]
         dim = len(input_vectors)
         self.params_min = np.array([0] * dim)
         self.params_max = np.array([len(x) - 1 for x in self.input_indices])
 
         self.type = dist_type
+        self.average_coeff = average_coeff
         self.params = {}
 
     def fit(self, data):
         # data has to be in units of indices
         ndata = data.shape[0]
-        if self.type == 'gaussian':
-            mu = np.mean(data, axis=0)
-            self.params['var'] = 1 / ndata * (data - mu).T @ (data - mu)
-            # self.params['var'] =  np.var(data, axis=0)
-            self.params['mu'] = mu
+        alpha = self.average_coeff
+        if self.type == 'gauss':
+            new_mu = np.mean(data, axis=0)
+            new_var = 1 / ndata * (data - new_mu).T @ (data - new_mu)
+            self.params['mu'] = self.params.get('mu', 0) * (1 - alpha) + new_mu * alpha
+            self.params['var'] = self.params.get('var', 0) * (1 - alpha) + new_var * alpha
         elif self.type == 'kde':
             self.params['kde'] = gaussian_kde(np.transpose(data))
 
@@ -52,7 +67,7 @@ class CEM:
 
     def sample(self, n):
         if self.params:
-            if self.type == 'gaussian':
+            if self.type == 'gauss':
                 samples = multivariate_normal.rvs(self.params['mu'],
                                                   self.params['var'], n)
             else:
@@ -78,6 +93,27 @@ class CEMSearch(LoggingBase):
     # noinspection PyUnusedLocal
     def __init__(self, spec_file: str = '', spec_dict: Optional[Mapping[str, Any]] = None,
                  load: bool = False, **kwargs) -> None:
+        """
+        Parameters
+        ----------
+        spec_file: str
+        spec_dict: Dict[str, Any]
+        some non-obvious fields
+            elite_criteria: str
+                'optim': from sorted x1, ..., xn choose p-quantile
+                'csp': constraint satisfaction is enough, from x1, ..., xn
+                choose p-quantile if it is worst than the constraint else choose all which are
+                better than the constraint
+            allow_repeated: bool
+                True to allow repeated samples to be added to the buffer, else all samples in buffer
+                will have equal likelihood when drawn from it.
+            on_policy: bool
+                True to allow on_policy sample usage, meaning that we won't use samples from
+                previous policies to train the current policy (samples are not drawn from
+                CacheBuffer)
+        load: bool
+        kwargs: Dict[str, Any]
+        """
         LoggingBase.__init__(self)
 
         if spec_file:
@@ -111,6 +147,10 @@ class CEMSearch(LoggingBase):
         self.goal = params['goal_value']
         self.mode = params['mode']
 
+        self.allow_repeated = params.get('allow_repeated', False)
+        self.elite_criteria = params.get('elite_criteria', 'optim')
+        self.on_policy = params.get('on_policy', False)
+
         eval_fn = params['fn']
         try:
             fn = registered_functions[eval_fn]
@@ -127,7 +167,8 @@ class CEMSearch(LoggingBase):
                                                num=100) for _ in range(self.ndim)]
         self.input_vectors = [self.input_scale * vec for vec in self.input_vectors_norm]
 
-        self.cem = CEM(self.input_vectors, dist_type=params['base_fn'])
+        self.cem = CEM(self.input_vectors, dist_type=params['base_fn'],
+                       average_coeff=params.get('average_coeff', 1))
         self.buffer = CacheBuffer(self.mode, self.goal, self.cut_off)
 
     @classmethod
@@ -165,32 +206,42 @@ class CEMSearch(LoggingBase):
     def collect_samples(self, n):
         n_collected = 0
         new_samples = []
+        new_sample_fvals = []
         while n_collected < n:
             samples = self.sample_model(n - n_collected)
             xsamples = index_to_xval(self.input_vectors, samples)
             for xsample, sample in zip(xsamples, samples):
-                if xsample not in self.buffer:
+                if xsample not in self.buffer or self.allow_repeated:
                     fval = self.fn(xsample)
-                    self.buffer.add_samples(xsample[None, ...], sample[None, ...], fval[None, ...])
-                    new_samples.append(xsample)
+                    self.buffer.add_samples(xsample[None, ...], sample[None, ...], fval[None, ...],
+                                            allow_repeated=self.allow_repeated)
+                    new_samples.append(sample)
+                    new_sample_fvals.append(fval)
                     n_collected += 1
                 else:
                     print(f'item {xsample} already exists!')
 
-        return np.array(new_samples)
+        return np.array(new_samples), np.array(new_sample_fvals)
 
-    def get_top_samples(self, iter_cnt):
-        samples = np.array([x.item_ind for x in self.buffer.db_set])
-        fvals = np.array([x.val for x in self.buffer.db_set])
+    def get_top_samples(self, iter_cnt, samples, sample_fvals):
+        samples = samples if self.on_policy else np.array([x.item_ind for x in self.buffer.db_set])
+        fvals = sample_fvals if self.on_policy else np.array([x.val for x in self.buffer.db_set])
+        nsamples = len(samples)
 
         scores_arr = self.score(fvals)
-
-        sample_ids = range(len(scores_arr))
+        sample_ids = range(nsamples)
         sorted_sample_ids = sorted(sample_ids, key=lambda i: scores_arr[i])
-
         sorted_samples = samples[sorted_sample_ids]
 
-        top_index = int(self.cut_off * len(sorted_samples))
+        # find the last index which satisfies the constraint
+        top_index = (scores_arr == 0).sum(-1).astype('int')
+        if self.elite_criteria == 'optim':
+            top_index = math.ceil(self.cut_off * nsamples)
+        elif self.elite_criteria == 'csp':
+            top_index = max(top_index, math.ceil(self.cut_off * nsamples))
+        else:
+            raise ValueError('invalid elite criteria: optim | csp')
+
         top_samples = sorted_samples[:top_index]
 
         # plot exploration
@@ -210,8 +261,8 @@ class CEMSearch(LoggingBase):
         else:
             iter_cnt = 0
             avg_cost = []
-            self.collect_samples(self.n_init_samples)
-            top_samples = self.get_top_samples(0)
+            samples, sample_fvals = self.collect_samples(self.n_init_samples)
+            top_samples = self.get_top_samples(0, samples, sample_fvals)
             self.cem.fit(top_samples)
             if self.ndim == 2:
                 xdata_ind = self.cem.sample(1000)
@@ -314,7 +365,11 @@ class CEMSearch(LoggingBase):
         print('-------- REPORT --------')
         self.report_accuracy(ntimes, nsamples)
         self.report_variation(nsamples)
-        self.plot_solution_space(nsamples=1000)
+        try:
+            self.plot_solution_space(nsamples=1000)
+        except ValueError:
+            print('Accuracy is not enough to plot solutions space (number of satisfying solutions '
+                  'is small)')
 
     def plot_solution_space(self, nsamples=100):
         sample_ids = self.sample_model(nsamples)
@@ -331,9 +386,9 @@ class CEMSearch(LoggingBase):
 
         while iter_cnt < self.niter:
             print(f'iter {iter_cnt}')
-            self.collect_samples(self.nsamples)
-            avg_cost.append(self.buffer.mean)
-            top_samples = self.get_top_samples(iter_cnt+1)
+            samples, sample_fvals = self.collect_samples(self.nsamples)
+            avg_cost.append(samples.mean() if self.on_policy else self.buffer.mean)
+            top_samples = self.get_top_samples(iter_cnt+1, samples, sample_fvals)
 
             self.cem.fit(top_samples)
 

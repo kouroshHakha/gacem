@@ -2,16 +2,20 @@ alg_class: optnet.alg.cross_entropy.cem_optim.CEMSearch
 root_dir: data
 params:
   prefix: cem_gauss
-  suffix: 5d_iter100_s20_n5000
-  seed: 20
-  ndim: 5
-  base_fn: gauss
+  suffix: styblinski_20d_iter50_s10_n5
+  seed: 10
+  ndim: 20
+  base_fn: kde
   cut_off: 0.4
   fn: styblinski
   goal_value: 20
   input_scale: 5.0
   mode: le
-  n_init_samples: 5000
-  niter: 50
-  nsamples: 5000
+  n_init_samples: 50
+  niter: 1700
+  nsamples: 5
   num_input_points: 100
+  allow_repeated: True
+  elite_criteria: 'csp'
+  on_policy: False
+  average_coeff: 1
