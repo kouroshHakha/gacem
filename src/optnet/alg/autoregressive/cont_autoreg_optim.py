@@ -16,6 +16,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from scipy.stats import gaussian_kde
 
 from utils.file import read_yaml, write_yaml, get_full_name
 from utils.loggingBase import LoggingBase
@@ -28,7 +29,7 @@ from ...torch.dist import cdf_logistic, cdf_normal, cdf_uniform
 from ...data.buffer import CacheBuffer
 from ...models.made import MADE
 from ..random.random import Random
-from ...data.vector import index_to_xval
+from ...data.vector import index_to_xval, xval_to_index
 
 from ...viz.plot import (
     plot_pca_2d, plt_hist2D, plot_cost, plot_learning_with_epochs
@@ -84,6 +85,9 @@ class AutoRegSearch(LoggingBase):
         self.full_training = params['full_training_last']
         self.input_scale = params['input_scale']
 
+        self.important_sampling = params['important_sampling']
+        self.visited_dist: Optional[nn.Module] = None
+
         eval_fn = params['eval_fn']
         try:
             self.fn = registered_functions[eval_fn]
@@ -103,6 +107,10 @@ class AutoRegSearch(LoggingBase):
         self.input_vectors = [self.input_scale * vec for vec in self.input_vectors_norm]
         # TODO: remove this hacky way of keeping track of delta
         self.delta = self.input_vectors_norm[0][-1] - self.input_vectors_norm[0][-2]
+
+        # keep track of lo and hi for indicies
+        self.params_min = np.array([0] * self.ndim)
+        self.params_max = np.array([len(x) - 1 for x in self.input_vectors])
 
     @classmethod
     def set_seed(cls, seed):
@@ -194,9 +202,16 @@ class AutoRegSearch(LoggingBase):
             obj_term  = - weights.data
             ent_term = (self.beta * (1 + logp_vec)).data
 
-            # coeff = (ent_term + obj_term) * pos_ind
-            main_obj = obj_term * logp_vec
-            ent_obj = ent_term * logp_vec
+            # important sampling coefficient (with frozen gradient)
+            if self.important_sampling:
+                xin_np_ids = xval_to_index(self.input_vectors_norm, xin.cpu().data.numpy()).T
+                probs_visited = self.visited_dist.evaluate(xin_np_ids)
+                is_coeff = 1.0 / (torch.from_numpy(probs_visited).to(self.device) + eps_tens)
+            else:
+                is_coeff = 1
+
+            main_obj = obj_term * logp_vec * is_coeff
+            ent_obj = ent_term * logp_vec * is_coeff
 
             npos = pos_ind.sum(-1)
             npos = 1 if npos == 0 else npos
@@ -367,16 +382,33 @@ class AutoRegSearch(LoggingBase):
 
         return new_samples
 
+    def _clip_and_round(self, samples):
+        lo = np.zeros(samples.shape) + self.params_min
+        hi = np.zeros(samples.shape) + self.params_max
+        out_samples = np.clip(samples, lo, hi)
+        out_samples = np.floor(out_samples).astype('int')
+        return out_samples
+
     def train(self, iter_cnt: int, nepochs: int, split=1.0):
         # treat the sampled data as a static data set and take some gradient steps on it
         xtr, xte, wtr, wte = self.buffer.draw_tr_te_ds(split=split)
+        if self.important_sampling:
+            visited_samples =  np.array([x.item_ind for x in self.buffer.db_set])
+            self.visited_dist = gaussian_kde(visited_samples.T)
+            if self.ndim == 2 and ((iter_cnt + 1) % 10 == 0):
+                fpath = self.work_dir / get_full_name(name='dist',
+                                                      suffix=f'{iter_cnt}_visited')
+                sample_ids = self._clip_and_round(self.visited_dist.resample(1000).T)
+                samples = index_to_xval(self.input_vectors, sample_ids)
+                s = self.input_scale
+                plt_hist2D(samples, fpath=fpath, range=np.array([[-s, s], [-s, s]]), cmap='binary')
+
         if self.ndim == 2:
             fpath = self.work_dir / get_full_name(name='dist', prefix='training',
                                                   suffix=f'{iter_cnt}_before')
             samples = index_to_xval(self.input_vectors, xtr[:, 1, :].astype('int'))
             s = self.input_scale
-            _range = np.array([[-s, s], [-s, s]])
-            plt_hist2D(samples, fpath=fpath, range=_range, cmap='binary')
+            plt_hist2D(samples, fpath=fpath, range=np.array([[-s, s], [-s, s]]), cmap='binary')
 
         # per epoch
         print('-'*50)
@@ -384,7 +416,7 @@ class AutoRegSearch(LoggingBase):
         te_loss = 0
         tr_loss_list = []
         for epoch_id in range(nepochs):
-            tr_nll = self.run_epoch(xtr, wtr, mode='train')
+            tr_nll = self.run_epoch(xtr, wtr, mode='train', debug=False)
             tr_loss_list.append(tr_nll)
             tr_loss += tr_nll / self.nepochs
 
@@ -428,10 +460,12 @@ class AutoRegSearch(LoggingBase):
         dim = self.ndim
         self.model: nn.Module = MADE(dim, self.hiddens, dim * 3 * self.nr_mix, seed=self.seed,
                                      natural_ordering=True)
+        self.visited_dist: nn.Module = MADE(dim, self.hiddens, dim * 3 * self.nr_mix,
+                                            seed=self.seed, natural_ordering=True)
         self.model.to(self.device)
+        self.visited_dist.to(self.device)
 
         self.opt = optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=0)
-
         self.buffer = CacheBuffer(self.mode, self.goal, self.cut_off)
 
     def setup_model_state(self):
