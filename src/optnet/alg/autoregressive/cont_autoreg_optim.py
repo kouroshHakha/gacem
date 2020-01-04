@@ -16,7 +16,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from scipy.stats import gaussian_kde
 
 from utils.file import read_yaml, write_yaml, get_full_name
 from utils.loggingBase import LoggingBase
@@ -29,7 +28,7 @@ from ...torch.dist import cdf_logistic, cdf_normal, cdf_uniform
 from ...data.buffer import CacheBuffer
 from ...models.made import MADE
 from ..random.random import Random
-from ...data.vector import index_to_xval, xval_to_index
+from ...data.vector import index_to_xval
 
 from ...viz.plot import (
     plot_pca_2d, plt_hist2D, plot_cost, plot_learning_with_epochs
@@ -120,13 +119,13 @@ class AutoRegSearch(LoggingBase):
         # noinspection PyUnresolvedReferences
         torch.cuda.manual_seed_all(seed)
 
-    def get_probs(self, xin: torch.Tensor, debug=False):
+    def get_probs(self, xin: torch.Tensor, model: nn.Module, debug=False):
         """Given an input tensor (N, dim) computes the probabilities across the cardinality space
         of each dimension. prob.shape = (N, dim, K) where K is number of possible values for each
         dimension. Assume that xin is normalized to [-1,1], and delta is given."""
         delta = self.delta
         xin = xin.to(self.device)
-        xhat = self.model(xin)
+        xhat = model(xin)
         dim = self.ndim
         coeffs = torch.stack([xhat[..., i::dim*3] for i in range(dim)], dim=-2)
         # Note: coeffs was previously interpreted as log_coeffs
@@ -185,9 +184,9 @@ class AutoRegSearch(LoggingBase):
 
         return probs
 
-    def get_nll(self, xin: torch.Tensor, weights=None, debug=False):
+    def get_nll(self, xin: torch.Tensor, model: nn.Module, weights=None, debug=False):
         """Given an input tensor computes the average negative likelihood of observing the inputs"""
-        probs = self.get_probs(xin)
+        probs = self.get_probs(xin, model=model)
         eps_tens = 1e-15
         logp_vec = (probs + eps_tens).log10().sum(-1)
 
@@ -204,9 +203,9 @@ class AutoRegSearch(LoggingBase):
 
             # important sampling coefficient (with frozen gradient)
             if self.important_sampling:
-                xin_np_ids = xval_to_index(self.input_vectors_norm, xin.cpu().data.numpy()).T
-                probs_visited = self.visited_dist.evaluate(xin_np_ids)
-                is_coeff = 1.0 / (torch.from_numpy(probs_visited).to(self.device) + eps_tens)
+                probs_visited = self.get_probs(xin, model=self.visited_dist)
+                probs_visited = probs_visited.prod(-1).to(self.device)
+                is_coeff = 10**(-self.ndim * 2) / (probs_visited + eps_tens)
             else:
                 is_coeff = 1
 
@@ -232,7 +231,7 @@ class AutoRegSearch(LoggingBase):
                 for w, lp in zip(weights, logp_vec):
                     print(f'w = {w:10.4}, prob = {torch.exp(lp):10.4}')
                 # probs = self.get_probs(xin, debug=True)
-                foo = torch.autograd.grad(min_obj, self.model.net[0].weight, retain_graph=True)
+                foo = torch.autograd.grad(min_obj, model.net[0].weight, retain_graph=True)
                 print(foo)
                 pdb.set_trace()
 
@@ -250,7 +249,7 @@ class AutoRegSearch(LoggingBase):
         sample = p.multinomial(num_samples=1).squeeze(-1)
         return sample
 
-    def sample_model(self, nsamples: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def sample_model(self,nsamples: int,  model: nn.Module) -> Tuple[torch.Tensor, torch.Tensor]:
         """samples the current model nsamples times and returns both normalized samples i.e
         between [-1, 1] and sample indices
 
@@ -264,7 +263,7 @@ class AutoRegSearch(LoggingBase):
         samples: Tuple[torch.Tensor, torch.Tensor]
             normalized samples / sample indices
         """
-        self.model.eval()
+        model.eval()
 
         dim = self.ndim
 
@@ -287,7 +286,7 @@ class AutoRegSearch(LoggingBase):
                     in_torch = torch.from_numpy(self.input_vectors_norm[i]).to(self.device)
                     xin[..., i] = torch.stack([in_torch] * bsize)
                     xin_reshaped = xin.view((bsize * n, dim))
-                    probs_reshaped = self.get_probs(xin_reshaped)
+                    probs_reshaped = self.get_probs(xin_reshaped, model=model)
                     probs = probs_reshaped.view((bsize, n, dim))
                     xi_ind = self.sample_probs(probs, i)  # ith x index
                     xsample[:, i] = xin[..., i][range(bsize), xi_ind]
@@ -311,7 +310,7 @@ class AutoRegSearch(LoggingBase):
                         xin = torch.stack([xsample.squeeze()] * n)
                     xin[:, i] = torch.from_numpy(self.input_vectors_norm[i])
                     # TODO: For normal dist this probs gets a lot of mass on the edges
-                    probs = self.get_probs(xin)
+                    probs = self.get_probs(xin, model=model)
                     xi_ind = self.sample_probs(probs, i)  # ith x index
                     xsample[0, i] = torch.tensor(self.input_vectors_norm[i][xi_ind])
                     xsample_ind[0, i] = xi_ind
@@ -324,7 +323,8 @@ class AutoRegSearch(LoggingBase):
 
     def run_epoch(self, data: np.ndarray, weights: np.ndarray, mode='train',
                   debug=False):
-        self.model.train() if mode == 'train' else self.model.eval()
+        for model in [self.visited_dist, self.model]:
+            model.train() if mode == 'train' else model.eval()
 
         n, dim,  _ = data.shape
 
@@ -342,11 +342,15 @@ class AutoRegSearch(LoggingBase):
             wb_tens = torch.from_numpy(wb).to(self.device)
 
             xin = xb_tens[:, 0, :]
-            loss = self.get_nll(xin, weights=wb_tens, debug=debug)
+            loss = self.get_nll(xin, weights=wb_tens, model=self.model, debug=debug)
             if mode == 'train':
                 self.opt.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.model.parameters(), 1e3)
+                if self.important_sampling:
+                    visited_model_loss = self.get_nll(xin, model=self.visited_dist)
+                    visited_model_loss.backward()
+                    nn.utils.clip_grad_norm_(self.visited_dist.parameters(), 1e3)
                 self.opt.step()
             nll_per_b += loss.to(self.cpu).item() / nstep
 
@@ -362,7 +366,7 @@ class AutoRegSearch(LoggingBase):
                 _, xnew_id_np = Random.sample_data(self.ndim, self.input_vectors_norm, 1)
                 xnew_id_np = xnew_id_np.astype('int')
             else:
-                _, xnew_ind = self.sample_model(1)
+                _, xnew_ind = self.sample_model(1, model=self.model)
                 xnew_id_np = xnew_ind.to(self.cpu).data.numpy().astype('int')
 
             # simulate and compute the adjustment weights
@@ -392,16 +396,6 @@ class AutoRegSearch(LoggingBase):
     def train(self, iter_cnt: int, nepochs: int, split=1.0):
         # treat the sampled data as a static data set and take some gradient steps on it
         xtr, xte, wtr, wte = self.buffer.draw_tr_te_ds(split=split)
-        if self.important_sampling:
-            visited_samples =  np.array([x.item_ind for x in self.buffer.db_set])
-            self.visited_dist = gaussian_kde(visited_samples.T)
-            if self.ndim == 2 and ((iter_cnt + 1) % 10 == 0):
-                fpath = self.work_dir / get_full_name(name='dist',
-                                                      suffix=f'{iter_cnt}_visited')
-                sample_ids = self._clip_and_round(self.visited_dist.resample(1000).T)
-                samples = index_to_xval(self.input_vectors, sample_ids)
-                s = self.input_scale
-                plt_hist2D(samples, fpath=fpath, range=np.array([[-s, s], [-s, s]]), cmap='binary')
 
         if self.ndim == 2:
             fpath = self.work_dir / get_full_name(name='dist', prefix='training',
@@ -465,7 +459,8 @@ class AutoRegSearch(LoggingBase):
         self.model.to(self.device)
         self.visited_dist.to(self.device)
 
-        self.opt = optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=0)
+        params = list(self.model.parameters()) + list(self.visited_dist.parameters())
+        self.opt = optim.Adam(params, lr=self.lr, weight_decay=0)
         self.buffer = CacheBuffer(self.mode, self.goal, self.cut_off)
 
     def setup_model_state(self):
@@ -481,7 +476,7 @@ class AutoRegSearch(LoggingBase):
             self.train(0, self.n_init_samples)
 
             if self.ndim == 2:
-                _, xdata_ind = self.sample_model(1000)
+                _, xdata_ind = self.sample_model(1000, model=self.model)
                 fpath = self.work_dir / get_full_name(name='dist', prefix='training',
                                                       suffix=f'0_after')
                 data_ind = xdata_ind.to(self.cpu).data.numpy().astype('int')
@@ -493,6 +488,14 @@ class AutoRegSearch(LoggingBase):
             items = (0, [], [])
             self.save_checkpoint(*items)
         return items
+
+    def _plot_dist(self, data_indices: torch.Tensor, name, prefix, suffix):
+        fpath = self.work_dir / get_full_name(name, prefix, suffix)
+        data_ind = data_indices.to(self.cpu).data.numpy().astype('int')
+        data = index_to_xval(self.input_vectors, data_ind)
+        s = self.input_scale
+        _range = np.array([[-s, s], [-s, s]])
+        plt_hist2D(data, fpath=fpath, range=_range, cmap='binary')
 
     def _run_alg(self):
 
@@ -510,14 +513,11 @@ class AutoRegSearch(LoggingBase):
 
             tr_losses.append(tr_loss_list)
             if (iter_cnt + 1) % 10 == 0 and self.ndim == 2:
-                _, xdata_ind = self.sample_model(1000)
-                fpath = self.work_dir / get_full_name(name='dist', prefix='training',
-                                                      suffix=f'{iter_cnt+1}_after')
-                data_ind = xdata_ind.to(self.cpu).data.numpy().astype('int')
-                data = index_to_xval(self.input_vectors, data_ind)
-                s = self.input_scale
-                _range = np.array([[-s, s], [-s, s]])
-                plt_hist2D(data, fpath=fpath, range=_range, cmap='binary')
+                _, xdata_ind = self.sample_model(1000, model=self.model)
+                _, xvisited_ind = self.sample_model(1000, model=self.visited_dist)
+                self._plot_dist(xdata_ind, 'dist', 'training', f'{iter_cnt+1}_after')
+                self._plot_dist(xvisited_ind, 'dist', 'visited', f'{iter_cnt+1}')
+
 
             iter_cnt += 1
             self.save_checkpoint(iter_cnt, tr_losses, avg_cost)
@@ -526,7 +526,7 @@ class AutoRegSearch(LoggingBase):
         plot_cost(avg_cost, fpath=self.work_dir / 'cost.png')
 
     def _sample_model_for_eval(self, nsamples) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        _, sample_ids = self.sample_model(nsamples)
+        _, sample_ids = self.sample_model(nsamples, model=self.model)
         sample_ids_arr = sample_ids.long().to(torch.device('cpu')).numpy()
         xsample_arr = index_to_xval(self.input_vectors, sample_ids_arr)
         fval = self.fn(xsample_arr)

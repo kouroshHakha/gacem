@@ -2,7 +2,7 @@ alg_class: optnet.alg.autoregressive.cont_autoreg_optim.AutoRegSearch
 root_dir: data
 params:
   prefix: cont_autoreg
-  suffix: styblinski_2d_niter150_s10_b10_nrmix5_lay3x20_is
+  suffix: styblinski_2d_niter150_s10_b10_nrmix40_lay3x20_is
   seed: 10
   ndim: 2
   goal_value: 20
@@ -18,7 +18,7 @@ params:
   lr: 5e-4
   beta: 10
   base_fn: normal
-  nr_mix: 5
+  nr_mix: 40
   only_positive: True
   full_training_last: False
   input_scale: 5.0
