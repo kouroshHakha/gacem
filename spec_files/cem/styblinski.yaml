@@ -2,7 +2,7 @@ alg_class: optnet.alg.cross_entropy.cem_optim.CEMSearch
 root_dir: data
 params:
   prefix: cem_gauss
-  suffix: styblinski_20d_iter50_s10_n5
+  suffix: styblinski_20d_iter1700_s10_n5
   seed: 10
   ndim: 20
   base_fn: kde
