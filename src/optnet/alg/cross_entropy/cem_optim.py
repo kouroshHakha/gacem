@@ -15,7 +15,7 @@ from utils.loggingBase import LoggingBase
 from ...benchmarks.functions import registered_functions
 from ...benchmarks.fom import get_diversity_fom, compute_emprical_variation
 from ...data.buffer import CacheBuffer
-from ...viz.plot import plot_pca_2d, plt_hist2D, plot_cost
+from ...viz.plot import plot_pca_2d, plt_hist2D, plot_cost, plot_fn2d, show_solution_region
 from ...data.vector import index_to_xval
 
 class CEM:
@@ -406,5 +406,10 @@ class CEMSearch(LoggingBase):
         plot_cost(avg_cost, fpath=self.work_dir / 'cost.png')
 
     def main(self):
+        if self.ndim == 2:
+            x, y = self.input_vectors
+            plot_fn2d(x, y, self.fn, fpath=str(self.work_dir / 'fn2D.png'), cmap='viridis')
+            show_solution_region(x, y, self.fn, self.goal, mode=self.mode,
+                                 fpath=str(self.work_dir / 'dist2D.png'), cmap='binary')
         self._run_alg()
         self.check_solutions(ntimes=10, nsamples=1000)

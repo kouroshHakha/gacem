@@ -49,6 +49,46 @@ def ackley(x: Union[np.ndarray, numbers.Number]) -> np.ndarray:
 
     return y1 + y2 + y3
 
+def trigonometric(x: Union[np.ndarray, numbers.Number]) -> np.ndarray:
+    if isinstance(x, numbers.Number):
+        x = np.array([x])
+
+    y1 = - 8 * np.sin(7 * ((x - 0.9) ** 2)) ** 2
+    y2 = - 6 * np.sin(14 * ((x - 0.9) ** 2)) ** 2
+    y3 = - (x - 0.9) ** 2
+
+    return (y1 + y2 + y3).sum(-1)
+
+
+def levy(x: Union[np.ndarray, numbers.Number]) -> np.ndarray:
+    if isinstance(x, numbers.Number):
+        x = np.array([x])
+    w = 1 + (x - 1) / 4
+    y1 = np.sin(np.pi * w[..., 0]) ** 2
+    y2 = (w[..., -1] - 1) ** 2 * (1 + np.sin(2 * np.pi * w[..., -1]))
+    y3 = (w[..., :-1] - 1) ** 2 * (1 + 10 * np.sin(np.pi * w[..., :-1] + 1) ** 2)
+
+    return y1 + y2 + y3.sum(-1)
+
+def pinter(x: Union[np.ndarray, numbers.Number]) -> np.ndarray:
+    if isinstance(x, numbers.Number):
+        x = np.array([x])
+
+    xhat = np.concatenate([x[..., -1],x, x[..., 0]], axis=-1)
+
+    ndim = x.shape[-1]
+    index = np.arange(ndim) + 1
+    y1 = index * (xhat[..., 1:-1] ** 2)
+
+    y2_term = xhat[..., :-2] * np.sin(xhat[..., 1:-1]) - xhat[..., 1:-1] + np.sin(xhat[..., 2:])
+    y2 = 20 * index * (np.sin(y2_term) ** 2)
+
+    y3_term = xhat[..., :-2] ** 2 - 2 * xhat[..., 1:-1] + 3 * xhat[..., 2:] - \
+              np.cos(xhat[..., 1:-1]) + 1
+    y3 = index * np.log10(1 + index * y3_term)
+
+    return (y1 + y2 + y3).sum(-1)
+
 
 def show_weight_on_all(x1, x2, fn, value=4, value_avg=4, mode='le', ax=None, **kwargs):
     warnings.warn('show_weight_on_all is deprecated', DeprecationWarning)
@@ -74,4 +114,7 @@ registered_functions = {
     'mixture_ackley': mixture_ackley,
     'styblinski': styblinski,
     'ackley': ackley,
+    'trigonometric': trigonometric,
+    'pinter': pinter,
+    'levy': levy,
 }

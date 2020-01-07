@@ -1,0 +1,21 @@
+alg_class: optnet.alg.cross_entropy.cem_optim.CEMSearch
+root_dir: data
+params:
+  prefix: cem_sg
+  suffix: levy_2d_iter100_s10
+  seed: 10
+  ndim: 2
+  base_fn: gaussian
+  cut_off: 0.4
+  fn: levy
+  goal_value: 0.0001
+  input_scale: 10.0
+  mode: le
+  n_init_samples: 50
+  niter: 100
+  nsamples: 5
+  num_input_points: 100
+  allow_repeated: False
+  elite_criteria: 'optim'
+  on_policy: True
+  average_coeff: 1
