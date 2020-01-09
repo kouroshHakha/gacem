@@ -146,6 +146,26 @@ def plot_cost(avg_cost, ax=None, fpath='', show_fig=False):
     ax.set_ylabel('avg_cost')
     _save_show_fig(fpath, show_fig)
 
+def plot_x_y(x, y=None, annotate=None, ax=None, fpath='', show_fig=False, xlabel='', ylabel='',
+             **kwargs):
+    ax = _get_ax(ax)
+    if y is None:
+        ax.plot(x, **kwargs)
+    else:
+        ax.plot(x, y, **kwargs)
+    if xlabel:
+        ax.set_xlabel(xlabel)
+    if ylabel:
+        ax.set_ylabel(ylabel)
+
+    if annotate:
+        diff_annotate = np.diff([0] + annotate)
+        for i, txt in enumerate(annotate):
+            if diff_annotate[i] > 0:
+                ax.annotate(txt, (x[i], y[i]))
+    _save_show_fig(fpath, show_fig)
+
+
 def scatter2d(data: np.ndarray, labels: Optional[np.ndarray] = None,
               label_mapping: Optional[Mapping[int, str]] = None,
               ax=None, fpath='', show_fig=False, fig_title=None, **kwargs):

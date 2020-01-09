@@ -111,23 +111,27 @@ class CacheElement:
 class CacheBuffer:
     """Buffer with caching capabilities"""
 
-    def __init__(self, mode, goal, cut_off=0.2):
+    def __init__(self, mode, goal, cut_off=0.2, with_frequencies = False):
         self.mode = mode
         self.goal = goal
         self.cut_off = cut_off
         self._running_mean = float('inf')
+        self.with_freq = with_frequencies
 
 
-        self.db_set = {} # using a dictionary as ordered set (discard values)
+        # use a dictionary for fast lookup of existance (values are frequency of repetition)
+        self.db_set = {}
+        # use priority queue for getting the top individuals mean quickly
+        # mean should not care about frequencies, so does db_pq
         self.db_pq = []
 
     @property
     def size(self):
-        return len(self.db_set)
+        return len(self.db_pq)
 
     @property
     def mean(self):
-        n = int(self.size * self.cut_off)
+        n = max(int(self.size * self.cut_off), 10) # max is for handling corner cases
         ret = heapq.nsmallest(n, self.db_pq)
         vals = [x[0] for x in ret]
         new_mean = float(np.mean(vals))
@@ -135,41 +139,80 @@ class CacheBuffer:
             self._running_mean = new_mean
         return self._running_mean
 
-    def add_samples(self, new_samples: np.ndarray, new_ind: np.ndarray, fvals: np.ndarray,
-                    allow_repeated: bool = False):
+    def topn_mean(self, n):
+        ret = heapq.nsmallest(n, self.db_pq)
+        vals = [x[0] for x in ret]
+        return np.mean(vals)
+
+    @property
+    def tot_freq(self):
+        return sum([x[0] for x in self.db_set.values()])
+
+    @property
+    def n_sols(self):
+        ret = heapq.nsmallest(self.size, self.db_pq)
+        vals = [x[0] for x in ret]
+        if self.mode == 'le':
+            return (np.array(vals) <= self.goal).sum(-1)
+        else:
+            return (np.array(vals) >= self.goal).sum(-1)
+
+
+    def add_samples(self, new_samples: np.ndarray, new_ind: np.ndarray, fvals: np.ndarray):
         for item, item_ind, val in zip(new_samples, new_ind, fvals):
             element = CacheElement(item, item_ind, val)
-            if element not in self.db_set or allow_repeated:
+
+            already_exists = element in self.db_set
+            if not already_exists:
                 priority = val if self.mode == 'le' else -val
                 heapq.heappush(self.db_pq, (priority, hash(element)))
-                self.db_set[element] = element
+                self.db_set[element] = [1, element]
             else:
-                print(f'item {item} already exists!')
+                self.db_set[element][0] += 1
 
+    def _weights(self, normalize_weight: bool):
 
-    def _weights(self):
-        values_list = [x.val for x in self.db_set]
+        values_list = []
+        for el in self.db_set:
+            if self.with_freq:
+                values_list += [el.val for _ in range(self.db_set[el][0])]
+            else:
+                values_list.append(el.val)
         values_np = np.array(values_list)
+
+        if self.mean == float('inf'):
+            raise ValueError('mean is infinite')
+
         weights = weight(values_np, self.goal, self.mean, self.mode)
         # normalize weights to have a max of 1
-        weights_norm = weights / weights.max()
-        return weights_norm
+        if normalize_weight:
+            weights_norm = weights / weights.max()
+            return weights_norm
+        return weights
 
     def _get_all_data(self):
         data_list = []
         for el in self.db_set:
             data = np.stack([el.item, el.item_ind], axis=0)
-            data_list.append(data)
+            if self.with_freq:
+                # repeat according to frequencies
+                data_list += [data for _ in range(self.db_set[el][0])]
+            else:
+                data_list.append(data)
+
         return np.stack(data_list, axis=0).astype('float32')
 
-    def draw_tr_te_ds(self, split=0.8, only_positive = False):
+    def draw_tr_te_ds(self, split=0.8, only_positive = False, normalize_weight=True):
         data = self._get_all_data()
-        weights = self._weights()
+        weights = self._weights(normalize_weight)
         if only_positive:
             data = data[weights > 0]
             weights = weights[weights > 0]
-        ret = split_data(data, weights, split)
-        return ret
+        train_x, test_x, train_w, test_w = split_data(data, weights, split)
+        return train_x, test_x, train_w, test_w
 
     def __contains__(self, item: np.ndarray):
         return item.squeeze().tostring() in self.db_set
+
+    def __getitem__(self, item: np.ndarray):
+        return self.db_set[item.tostring()][1].val
