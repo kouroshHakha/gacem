@@ -162,8 +162,7 @@ class CEMSearch(LoggingBase):
             write_yaml(self.work_dir / 'params.yaml', specs, mkdir=True)
 
         self.load = load
-        self.set_seed(params['seed'])
-
+        self.seed = params['seed']
         self.ndim = params['ndim']
         self.nsamples = params['nsamples']
         self.n_init_samples = params['n_init_samples']
@@ -490,6 +489,7 @@ class CEMSearch(LoggingBase):
                  xlabel='n_freq', ylabel=f'n_sols')
 
     def main(self):
+        self.set_seed(self.seed)
         if self.ndim == 2:
             x, y = self.input_vectors
             plot_fn2d(x, y, self.fn, fpath=str(self.work_dir / 'fn2D.png'), cmap='viridis')

@@ -39,7 +39,7 @@ class AutoRegSearch(LoggingBase):
 
     # noinspection PyUnusedLocal
     def __init__(self, spec_file: str = '', spec_dict: Optional[Mapping[str, Any]] = None,
-                 load: bool = False, **kwargs) -> None:
+                 load: bool = False, use_time_stamp: bool = True,**kwargs) -> None:
         LoggingBase.__init__(self)
 
         if spec_file:
@@ -53,16 +53,21 @@ class AutoRegSearch(LoggingBase):
         if load:
             self.work_dir = Path(spec_file).parent
         else:
-            unique_name = time.strftime('%Y%m%d%H%M%S')
             suffix = params.get('suffix', '')
             prefix = params.get('prefix', '')
-            unique_name = get_full_name(unique_name, prefix, suffix)
+            if use_time_stamp:
+                unique_name = time.strftime('%Y%m%d%H%M%S')
+                unique_name = get_full_name(unique_name, prefix, suffix)
+            else:
+                unique_name = f'{prefix}' if prefix else ''
+                if suffix:
+                    unique_name = f'{unique_name}_{suffix}' if unique_name else f'{suffix}'
+
             self.work_dir = Path(specs['root_dir']) / f'{unique_name}'
             write_yaml(self.work_dir / 'params.yaml', specs, mkdir=True)
 
         self.load = load
         self.seed = params.get('seed', 10)
-        self.set_seed(self.seed)
         self.ndim = params['ndim']
         self.bsize = params['batch_size']
         self.hiddens = params['hidden_list']
@@ -102,7 +107,7 @@ class AutoRegSearch(LoggingBase):
 
         # hacky version of passing input vectors around
         self.input_vectors_norm = [np.linspace(start=-1.0, stop=1.0, dtype='float32',
-                                               num=100) for _ in range(self.ndim)]
+                                               num=21) for _ in range(self.ndim)]
         self.input_vectors = [self.input_scale * vec for vec in self.input_vectors_norm]
         # TODO: remove this hacky way of keeping track of delta
         self.delta = self.input_vectors_norm[0][-1] - self.input_vectors_norm[0][-2]
@@ -210,7 +215,7 @@ class AutoRegSearch(LoggingBase):
                 is_coeff = 1
 
             main_obj = obj_term * logp_vec * is_coeff
-            ent_obj = ent_term * logp_vec * is_coeff
+            ent_obj = 1 / self.ndim * ent_term * logp_vec * is_coeff
 
             npos = pos_ind.sum(-1)
             npos = 1 if npos == 0 else npos
@@ -361,8 +366,10 @@ class AutoRegSearch(LoggingBase):
         new_samples = []
         vecs = self.input_vectors
         norm_vecs = self.input_vectors_norm
+        # a counter for corner cases to tell the algorithm to explore more
+        n_repetitive_samples = 0
         while n_collected < n_samples:
-            if uniform:
+            if uniform or n_repetitive_samples > 1e2 * n_samples:
                 _, xnew_id_np = Random.sample_data(self.ndim, self.input_vectors_norm, 1)
                 xnew_id_np = xnew_id_np.astype('int')
             else:
@@ -382,6 +389,7 @@ class AutoRegSearch(LoggingBase):
                 new_samples.append(xsample)
                 n_collected += 1
             else:
+                n_repetitive_samples += 1
                 print(f'item {norm_sample} already exists!')
 
         return new_samples
@@ -427,28 +435,25 @@ class AutoRegSearch(LoggingBase):
 
         return tr_loss, tr_loss_list
 
-    def save_checkpoint(self, iter_cnt, tr_losses, avg_cost):
-        dict_to_save = dict(
-            iter_cnt=iter_cnt,
-            tr_losses=tr_losses,
-            avg_cost=avg_cost,
-            buffer=self.buffer,
-            model_state=self.model.state_dict(),
-            opt_state=self.opt.state_dict(),
-        )
-        torch.save(dict_to_save, self.work_dir / 'checkpoint.tar')
+    def save_checkpoint(self, saved_dict):
+        saved_dict.update(dict(buffer=self.buffer,
+                               model_state=self.model.state_dict(),
+                               opt_state=self.opt.state_dict(),
+                               visited=self.visited_dist.state_dict()))
+        torch.save(saved_dict, self.work_dir / 'checkpoint.tar')
 
     def load_checkpoint(self, ckpt_path: Union[str, Path]):
         s = time.time()
         checkpoint = torch.load(ckpt_path, map_location=self.device)
-        self.model.load_state_dict(checkpoint['model_state'])
-        self.opt.load_state_dict(checkpoint['opt_state'])
+        self.model.load_state_dict(checkpoint.pop('model_state'))
+        self.visited_dist.load_state_dict(checkpoint.pop('visited'))
+        self.opt.load_state_dict(checkpoint.pop('opt_state'))
         # override optimizer with input parameters
-        self.opt = optim.Adam(self.model.parameters(), self.lr)
-        self.buffer = checkpoint['buffer']
-        items = (checkpoint['iter_cnt'], checkpoint['tr_losses'], checkpoint['avg_cost'])
+        params = list(self.model.parameters()) + list(self.visited_dist.parameters())
+        self.opt = optim.Adam(params, self.lr)
+        self.buffer = checkpoint.pop('buffer')
         print(f'Model checkpoint loaded in {time.time() - s:.4f} seconds')
-        return items
+        return checkpoint
 
     def setup_model(self):
         dim = self.ndim
@@ -466,9 +471,22 @@ class AutoRegSearch(LoggingBase):
     def setup_model_state(self):
         # load the model or proceed without loading checkpoints
         if self.load:
-            items = self.load_checkpoint(self.work_dir / 'checkpoint.tar')
+            ckpt_dict = self.load_checkpoint(self.work_dir / 'checkpoint.tar')
+            tr_losses = ckpt_dict['tr_losses']
+            iter_cnt = ckpt_dict['iter_cnt']
+            avg_cost = ckpt_dict['avg_cost']
+            sim_cnt_list = ckpt_dict['sim_cnt']
+            n_sols_in_buffer = ckpt_dict['n_sols_in_buffer']
+            sample_cnt_list = ckpt_dict['sample_cnt']
+            top_means=dict(top_20=ckpt_dict['top_20'],
+                           top_40=ckpt_dict['top_40'],
+                           top_60=ckpt_dict['top_60'])
         else:
             # collect samples using the random initial model (probably a bad initialization)
+            iter_cnt = 0
+            tr_losses, avg_cost, \
+            sim_cnt_list, sample_cnt_list, n_sols_in_buffer = [], [], [], [], []
+            top_means=dict(top_20=[], top_40=[], top_60=[])
             self.model.eval()
             self.collect_samples(self.n_init_samples, uniform=True)
             # train the init model
@@ -485,9 +503,19 @@ class AutoRegSearch(LoggingBase):
                 _range = np.array([[-s, s], [-s, s]])
                 plt_hist2D(data, fpath=fpath, range=_range, cmap='binary')
 
-            items = (0, [], [])
-            self.save_checkpoint(*items)
-        return items
+            saved_data = dict(
+                iter_cnt=iter_cnt,
+                tr_losses=tr_losses,
+                avg_cost=avg_cost,
+                sim_cnt=sim_cnt_list,
+                n_sols_in_buffer=n_sols_in_buffer,
+                sample_cnt=sample_cnt_list,
+                **top_means,
+            )
+            self.save_checkpoint(saved_data)
+
+        return iter_cnt, tr_losses, avg_cost, sim_cnt_list, sample_cnt_list, n_sols_in_buffer, \
+               top_means
 
     def _plot_dist(self, data_indices: torch.Tensor, name, prefix, suffix):
         fpath = self.work_dir / get_full_name(name, prefix, suffix)
@@ -500,14 +528,25 @@ class AutoRegSearch(LoggingBase):
     def _run_alg(self):
 
         self.setup_model()
-        iter_cnt, tr_losses, avg_cost = self.setup_model_state()
+        ret = self.setup_model_state()
+        iter_cnt, tr_losses, avg_cost, \
+        sim_cnt_list, sample_cnt_list, n_sols_in_buffer, top_means = ret
 
         while iter_cnt < self.niter:
+            print(f'iter {iter_cnt}')
+            # ---- update plotting variables
+            sim_cnt_list.append(self.buffer.size)
+            n_sols_in_buffer.append(self.buffer.n_sols)
+            sample_cnt_list.append(self.buffer.tot_freq)
+            top_means['top_20'].append(self.buffer.topn_mean(20))
+            top_means['top_40'].append(self.buffer.topn_mean(40))
+            top_means['top_60'].append(self.buffer.topn_mean(60))
+
             self.collect_samples(self.nsamples)
             avg_cost.append(self.buffer.mean)
 
             if iter_cnt == self.niter - 1 and self.full_training:
-                tr_loss, tr_loss_list = self.train(iter_cnt + 1, self.nepochs * 10)
+                tr_loss, tr_loss_list = self.train(iter_cnt + 1, self.nepochs * 40)
             else:
                 tr_loss, tr_loss_list = self.train(iter_cnt + 1, self.nepochs)
 
@@ -520,7 +559,16 @@ class AutoRegSearch(LoggingBase):
 
 
             iter_cnt += 1
-            self.save_checkpoint(iter_cnt, tr_losses, avg_cost)
+            saved_data = dict(
+                iter_cnt=iter_cnt,
+                tr_losses=tr_losses,
+                avg_cost=avg_cost,
+                sim_cnt=sim_cnt_list,
+                n_sols_in_buffer=n_sols_in_buffer,
+                sample_cnt=sample_cnt_list,
+                **top_means,
+            )
+            self.save_checkpoint(saved_data)
 
         plot_learning_with_epochs(fpath=self.work_dir / 'learning_curve.png', training=tr_losses)
         plot_cost(avg_cost, fpath=self.work_dir / 'cost.png')
@@ -575,10 +623,14 @@ class AutoRegSearch(LoggingBase):
             times.append(time.time() - s)
             accuracy_list.append(acc)
 
+        acc_mean = 100 * float(np.mean(accuracy_list))
+        acc_std = 100 * float(np.std(accuracy_list))
+        acc_div = float(np.mean(div_list)) if div_list else 0
         print(f'gen_time / sample = {1e3 * np.mean(times).astype("float") / nsamples:.3f} ms')
-        print(f'accuracy_avg = {100 * np.mean(accuracy_list).astype("float"):.6f}, '
-              f'accuracy_std = {100 * np.std(accuracy_list).astype("float"):.6f}, '
-              f'solution diversity = {np.mean(div_list).astype("float"):.6f}')
+        print(f'accuracy_avg = {acc_mean:.6f}, accuracy_std = {acc_std:.6f}, '
+              f'solution diversity = {acc_div:.6f}')
+
+        return acc_mean, acc_std, acc_div
 
     def load_and_sample(self, nsamples, only_positive=False) -> np.ndarray:
         """sets up the model (i.e. initializes the weights .etc) and generates samples"""
@@ -612,12 +664,27 @@ class AutoRegSearch(LoggingBase):
             pos_samples = xsample[fval >= self.goal]
         plot_pca_2d(pos_samples, fpath=self.work_dir / f'pca_sol.png')
 
+    def report_entropy(self, ntimes, nsamples):
+        ent_list = []
+        for iter_cnt in range(ntimes):
+            samples, _ = self.sample_model(nsamples, self.model)
+            probs = self.get_probs(samples, self.model)
+            ent_list.append(-probs.log().mean().item())
+
+        ent = float(np.mean(ent_list) / self.ndim)
+        print(f'entropy/dim: {ent}')
+        return ent
+
     def check_solutions(self, ntimes=1, nsamples=1000):
         print('-------- REPORT --------')
-        self.check_random_solutions(ntimes, nsamples)
-        self.report_accuracy(ntimes, nsamples)
-        self.report_variation(nsamples)
-        self.plot_model_sol_pca()
+        # self.check_random_solutions(ntimes, nsamples)
+        acc, std, divesity = self.report_accuracy(ntimes, nsamples)
+        ent = self.report_entropy(ntimes, nsamples)
+
+        saved_data = dict(acc=acc, std=std, divesity=divesity, ent=ent)
+        write_yaml(self.work_dir / 'performance.yaml', saved_data)
+        # self.report_variation(nsamples)
+        # self.plot_model_sol_pca()
 
     def check_random_solutions(self, ntimes, nsamples):
         rnd_specs = deepcopy(self.specs)
@@ -627,7 +694,8 @@ class AutoRegSearch(LoggingBase):
         random_policy.check_solutions(ntimes, nsamples)
 
     def main(self) -> None:
-        self.check_random_solutions(ntimes=10, nsamples=10)
-        input('Press Enter To continue:')
+        # self.check_random_solutions(ntimes=10, nsamples=10)
+        # input('Press Enter To continue:')
+        self.set_seed(self.seed)
         self._run_alg()
-        self.check_solutions(ntimes=3, nsamples=100)
+        self.check_solutions(ntimes=10, nsamples=100)

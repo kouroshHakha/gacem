@@ -3,7 +3,7 @@ from typing import Optional
 
 import numpy as np
 
-from optnet.alg.utils.weight_compute import weight
+from optnet.alg.utils.weight_compute import weight, weight2
 from utils.data import split_data
 
 
@@ -183,6 +183,7 @@ class CacheBuffer:
         if self.mean == float('inf'):
             raise ValueError('mean is infinite')
 
+        # weight() is smooth weight2() is and indicator function similar to CEM
         weights = weight(values_np, self.goal, self.mean, self.mode)
         # normalize weights to have a max of 1
         if normalize_weight:

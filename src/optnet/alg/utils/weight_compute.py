@@ -27,9 +27,12 @@ def dist(zi: np.ndarray, z0: Union[np.ndarray, float], mode='ge'):
         distance[zi < z0] = np.exp(np.abs(zi - z0) / z0)[zi < z0]
         status[zi >= z0] = True
     elif mode == 'le':
-        distance = np.maximum(zi, z0) / np.minimum(zi, z0) - 1
-        distance[zi < 0] = np.NAN
-        status[zi <= z0] = True
+        # this was old weight computation
+        # distance = np.maximum(zi, z0) / np.minimum(zi, z0) - 1
+        # distance[zi < 0] = np.NAN
+        # status[zi <= z0] = True
+        # this is according to the icml paper
+        distance = np.abs(zi - z0) / np.abs(zi + z0 + 1e-15)
     else:
         raise ValueError('mode not supported')
     return distance, status
@@ -85,6 +88,33 @@ def weight(zi: np.ndarray, z0: Union[np.ndarray, float], z_avg: float, mode='ge'
     dist_in = zi[not_ok_ind]
     minor_err, _ = dist(dist_in, z_avg, mode)
     weights[not_ok_ind] = -np.exp(-1 / minor_err)
+
+    return weights
+
+def weight2(zi: np.ndarray, z0: Union[np.ndarray, float], z_avg: float, mode='ge'):
+    """Computes weights as a function of value, goal, and average value
+
+    if zi is better than z_avg: `w = 1`
+    else: 0
+    Parameters
+    -----------
+    zi: np.ndarray
+        value numpy array
+    z0: Union[np.ndarray, float] (not used)
+        goal value per element in zi or a single float for all elements
+    z_avg: float
+        average value
+    mode: str
+        'ge' or 'le', ge means satisfying is equivalent to zi >= z0, le means zi <= z0.
+    """
+    is_ok = np.greater_equal if mode == 'ge' else np.less_equal
+
+    weights = np.zeros(shape=zi.shape)
+    all_ind = np.arange(zi.shape[0])
+
+    # weight is 1 for all those which satisfy the constraint
+    ok_ind = all_ind[is_ok(zi, np.minimum(z0, z_avg) if mode == 'ge' else np.maximum(z0, z_avg))]
+    weights[ok_ind] = 1
 
     return weights
 

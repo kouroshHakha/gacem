@@ -1,10 +1,10 @@
 alg_class: optnet.alg.cross_entropy.cem_optim.CEMSearch
 root_dir: data
 params:
-  prefix: styblinski_2d_cem_kde
-  suffix: optim_off_co0p4_ns5
+  prefix: styblinski_20d_cem_kde
+  suffix: optim_off_co0p4_ns25
   seed: 10
-  ndim: 2
+  ndim: 20
   base_fn: kde
   cut_off: 0.4
   fn: styblinski
@@ -12,10 +12,10 @@ params:
   input_scale: 5.0
   mode: le
   n_init_samples: 50
-  niter: 150
-  nsamples: 5
+  niter: 201
+  nsamples: 25
   num_input_points: 100
   allow_repeated: True
   elite_criteria: 'optim'
-  on_policy: True
+  on_policy: False
   average_coeff: 1

@@ -1,0 +1,12 @@
+root_dir: data
+nsamples: 100
+prefix: 'ackley_5d'
+method: tsne
+seed: 10
+solution_only: True
+models:
+    3x20_s10: ackley_5d_gacem_co0p4_ns5_lay3x20_e5_b10_nr20/s10
+    3x20_s20: ackley_5d_gacem_co0p4_ns5_lay3x20_e5_b10_nr20/s20
+    3x20_s30: ackley_5d_gacem_co0p4_ns5_lay3x20_e5_b10_nr20/s30
+    3x20_s40: ackley_5d_gacem_co0p4_ns5_lay3x20_e5_b10_nr20/s40
+    3x20_s50: ackley_5d_gacem_co0p4_ns5_lay3x20_e5_b10_nr20/s50
