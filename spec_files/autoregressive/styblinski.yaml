@@ -2,23 +2,23 @@ alg_class: optnet.alg.autoregressive.cont_autoreg_optim.AutoRegSearch
 root_dir: data
 params:
   prefix: styblinski_20d_gacem
-  suffix: co0p4_ns5_lay3x200_e5_b10_nr20_S10FinalOnS10
+  suffix: co0p4_ns5_lay2x5_e50_b10_nr2_lr20e-4
   seed: 10
   ndim: 20
   goal_value: 20
-  hidden_list: [200, 200, 200]
+  hidden_list: [5, 5]
   mode: le
   batch_size: 16
-  nepochs: 5
+  nepochs: 50
   nsamples: 5
   n_init_samples: 50
-  init_nepochs: 1000
+  init_nepochs: 50
   cut_off: 0.4
-  niter: 1
-  lr: 5e-4
+  niter: 101
+  lr: 20e-4
   beta: 10
   base_fn: normal
-  nr_mix: 20
+  nr_mix: 2
   only_positive: True
   full_training_last: False
   input_scale: 5.0

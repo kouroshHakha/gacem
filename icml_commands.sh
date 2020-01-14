@@ -56,6 +56,7 @@
 # ---------- styblinski 2D
 # CPU compatible
 #./run.sh scripts/run_experiments.py spec_files/icml_paper/styblinski_dim/styblinski_2d_cem_dim_study.yaml -ns 5
+#./run.sh scripts/run_experiments.py spec_files/icml_paper/styblinski_dim/styblinski_2d_cem_sg_fixed_sigma_dim_study.yaml -ns 5
 #./run.sh scripts/run_experiments.py spec_files/icml_paper/styblinski_dim/styblinski_2d_cempp_gauss_dim_study.yaml -ns 5
 #./run.sh scripts/run_experiments.py spec_files/icml_paper/styblinski_dim/styblinski_2d_cempp_kde_dim_study.yaml -ns 5
 #./run.sh scripts/run_experiments.py spec_files/icml_paper/styblinski_dim/styblinski_2d_gacem_dim_study.yaml -ns 5
@@ -63,16 +64,19 @@
 # plot figures
 #./run.sh scripts/plot_experiments.py \
 #data/styblinski_2d_cem_gauss_optim_on_co0p4_ns25 \
+#data/styblinski_2d_cem_gauss_optim_on_co0p4_ns25_sig10 \
 #data/styblinski_2d_cem_gauss_optim_off_co0p4_ns25 \
 #data/styblinski_2d_cem_kde_optim_off_co0p4_ns25 \
-#data/styblinski_2d_gacem_co0p4_ns5_lay3x20_e5_b10_nr20 \
+#data/styblinski_2d_gacem_co0p4_ns5_lay2x5_e5_b10_nr2_lr40e-4 \
 #--save-path experiments_results/styblinski_2d \
-#-l cem cempp_sg cempp_kde gacem \
+#-l cem cem_fixed_sigma10 cempp_sg cempp_kde gacem \
 #-g 20
+#data/styblinski_2d_gacem_co0p4_ns5_lay3x20_e5_b10_nr20 \
 
 # ---------- styblinski 5D
 # CPU compatible
 #./run.sh scripts/run_experiments.py spec_files/icml_paper/styblinski_dim/styblinski_5d_cem_dim_study.yaml -ns 5
+#./run.sh scripts/run_experiments.py spec_files/icml_paper/styblinski_dim/styblinski_5d_cem_sg_fixed_sigma_dim_study.yaml -ns 5
 #./run.sh scripts/run_experiments.py spec_files/icml_paper/styblinski_dim/styblinski_5d_cempp_gauss_dim_study.yaml -ns 5
 #./run.sh scripts/run_experiments.py spec_files/icml_paper/styblinski_dim/styblinski_5d_cempp_kde_dim_study.yaml -ns 5
 ## GPU only (otherwise will take forever)
@@ -81,16 +85,18 @@
 # plot figures
 #./run.sh scripts/plot_experiments.py \
 #data/styblinski_5d_cem_gauss_optim_on_co0p4_ns25 \
+#data/styblinski_5d_cem_gauss_optim_on_co0p4_ns25_sig10 \
 #data/styblinski_5d_cem_gauss_optim_off_co0p4_ns25 \
 #data/styblinski_5d_cem_kde_optim_off_co0p4_ns25 \
 #data/styblinski_5d_gacem_co0p4_ns5_lay3x20_e5_b10_nr20 \
 #--save-path experiments_results/styblinski_5d \
-#-l cem cempp_sg cempp_kde gacem \
+#-l cem cem_fixed_sigma10 cempp_sg cempp_kde gacem \
 #-g 20
 
 # ---------- styblinski 20D
 # CPU compatible
 #./run.sh scripts/run_experiments.py spec_files/icml_paper/styblinski_dim/styblinski_20d_cem_dim_study.yaml -ns 5
+#./run.sh scripts/run_experiments.py spec_files/icml_paper/styblinski_dim/styblinski_20d_cem_sg_fixed_sigma_dim_study.yaml.yaml -ns 5
 #./run.sh scripts/run_experiments.py spec_files/icml_paper/styblinski_dim/styblinski_20d_cempp_gauss_dim_study.yaml -ns 5
 #./run.sh scripts/run_experiments.py spec_files/icml_paper/styblinski_dim/styblinski_20d_cempp_kde_dim_study.yaml -ns 5
 # GPU only (otherwise will take forever)
@@ -99,11 +105,12 @@
 # plot figures
 #./run.sh scripts/plot_experiments.py \
 #data/styblinski_20d_cem_gauss_optim_on_co0p4_ns25 \
+#data/styblinski_20d_cem_gauss_optim_on_co0p4_ns25_sig10 \
 #data/styblinski_20d_cem_gauss_optim_off_co0p4_ns25 \
 #data/styblinski_20d_cem_kde_optim_off_co0p4_ns25 \
 #data/styblinski_20d_gacem_co0p4_ns5_lay3x200_e5_b10_nr20 \
 #--save-path experiments_results/styblinski_20d \
-#-l cem cempp_sg cempp_kde gacem \
+#-l cem cem_fixed_sigma10 cempp_sg cempp_kde gacem \
 #-g 20
 
 

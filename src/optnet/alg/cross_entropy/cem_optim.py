@@ -22,7 +22,7 @@ class CEM:
     """
     The vanilla implementation of Cross Entropy method with gaussian distributions
     """
-    def __init__(self, input_vectors, average_coeff, dist_type='gauss'):
+    def __init__(self, input_vectors, average_coeff, dist_type='gauss', **kwargs):
         """
 
         Parameters
@@ -35,6 +35,9 @@ class CEM:
                 'KDE' for kernel density estimation
         average_coeff: float(not supported in KDE)
             a number between 0,1: params = (1-alpha) * old_params + alpha * new_params
+        **kwargs: Dict[str, Any]
+            gauss_sigma: if dist_type == 'gauss' will be the constant sigma used without updating
+            sigma
         """
         self.input_indices = [range(len(x)) for x in input_vectors]
         dim = len(input_vectors)
@@ -45,21 +48,28 @@ class CEM:
             raise ValueError(f'{dist_type} is not a valid kernel type for CEM++: guass | kde')
 
         self.type = dist_type
+        self.gauss_sigma = kwargs.get('gauss_sigma', None)
+
         self.average_coeff = average_coeff
         self.params = {}
 
     def fit(self, data):
         # data has to be in units of indices
-        ndata = data.shape[0]
+        if len(data.shape) > 2:
+            raise ValueError('Data should be in shape of Nxd (N samples with d dimensions)')
+        ndata, ndim = data.shape
         alpha = self.average_coeff
         if self.type == 'gauss':
             # TODO: investigate why this is more stable than using new_mu in computing new_var
             old_mu = self.params.get('mu', 0)
-            old_var = self.params.get('var', 0)
-            new_var = 1 / ndata * (data - old_mu).T @ (data - old_mu)
+            if self.gauss_sigma is None:
+                old_var = self.params.get('var', 0)
+                new_var = 1 / ndata * (data - old_mu).T @ (data - old_mu)
+                self.params['var'] = old_var  * (1 - alpha) + new_var * alpha
+            else:
+                self.params['var'] = self.gauss_sigma * np.eye(ndim)
             new_mu = np.mean(data, axis=0)
             self.params['mu'] = old_mu * (1 - alpha) + new_mu * alpha
-            self.params['var'] = old_var  * (1 - alpha) + new_var * alpha
         elif self.type == 'kde':
             self.params['kde'] = gaussian_kde(np.transpose(data))
 
@@ -200,7 +210,8 @@ class CEMSearch(LoggingBase):
         self.input_vectors = [self.input_scale * vec for vec in self.input_vectors_norm]
 
         self.cem = CEM(self.input_vectors, dist_type=params['base_fn'],
-                       average_coeff=params.get('average_coeff', 1))
+                       average_coeff=params.get('average_coeff', 1),
+                       gauss_sigma=params.get('gauss_sigma', None))
         self.buffer = CacheBuffer(self.mode, self.goal, self.cut_off,
                                   with_frequencies=self.allow_repeated)
 

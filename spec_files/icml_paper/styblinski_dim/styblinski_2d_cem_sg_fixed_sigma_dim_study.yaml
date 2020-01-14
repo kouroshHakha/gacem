@@ -1,10 +1,10 @@
 alg_class: optnet.alg.cross_entropy.cem_optim.CEMSearch
 root_dir: data
 params:
-  prefix: styblinski_20d_cem_gauss
+  prefix: styblinski_2d_cem_gauss
   suffix: optim_on_co0p4_ns25_sig10
   seed: 10
-  ndim: 20
+  ndim: 2
   base_fn: gauss
   cut_off: 0.4
   fn: styblinski
