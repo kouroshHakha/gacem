@@ -13,5 +13,7 @@ data/*
 *.tfevents*
 
 #spec_files
+experiments_results
+quick_tests
 
 ~$*

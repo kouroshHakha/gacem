@@ -36,6 +36,8 @@ def main(specs, force_replot=False):
     solution_only = specs.get('solution_only', False)
 
     samples_list, labels_list = [], []
+    init_pop_list, pop_labels_list = [], []
+
     label_map = {}
 
     work_dir = root_dir / 'model_comparison'
@@ -93,19 +95,36 @@ def main(specs, force_replot=False):
 
         labels = np.ones(shape=samples.shape[0]) * label
         label_map[label] = label_str
+
+        # content = read_pickle(root_dir / model_str / 'init_buffer.pickle')
+        # init_pop = list(map(lambda x: x.item, content['init_buffer'].db_set.keys()))
+        # init_pop_list += init_pop
+        # pop_labels_list.append(np.ones(shape=len(init_pop)) * label)
+
         # noinspection PyUnresolvedReferences
         samples_list.append(samples)
         labels_list.append(labels)
 
     samples = np.concatenate(samples_list, axis=0)
     labels = np.concatenate(labels_list, axis=0)
+    # pops = np.stack(init_pop_list, axis=0)
+    # pop_labels = np.concatenate(pop_labels_list, axis=0)
 
     if method == 'pca':
         pca_scatter2d(samples, labels, label_map, fpath=fig_path, alpha=0.5,
                       title=fig_title, edgecolors='none', s=10)
     elif method == 'tsne':
+        # import matplotlib.pyplot as plt
+        # plt.close()
+        # _, axes = plt.subplots(2, 1)
+        # tsne_scatter2d(samples, labels, label_map, seed=seed, ax=axes[0], alpha=0.5,
+        #                title=fig_title, edgecolors='none', s=10)
         tsne_scatter2d(samples, labels, label_map, seed=seed, fpath=fig_path, alpha=0.5,
                        title=fig_title, edgecolors='none', s=10)
+        # tsne_scatter2d(pops, pop_labels, label_map, seed=seed, ax=axes[1], alpha=0.5,
+        #                title=fig_title, edgecolors='none', s=10)
+        # plt.tight_layout()
+        # plt.savefig(fig_path)
     else:
         raise ValueError('invalid dimensionality reduction, valid options are {"pca"| "tsne"}')
 

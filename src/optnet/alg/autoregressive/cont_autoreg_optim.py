@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from utils.file import read_yaml, write_yaml, get_full_name
+from utils.file import read_yaml, write_yaml, get_full_name, write_pickle, read_pickle
 from utils.loggingBase import LoggingBase
 
 from ...benchmarks.functions import registered_functions
@@ -39,7 +39,8 @@ class AutoRegSearch(LoggingBase):
 
     # noinspection PyUnusedLocal
     def __init__(self, spec_file: str = '', spec_dict: Optional[Mapping[str, Any]] = None,
-                 load: bool = False, use_time_stamp: bool = True,**kwargs) -> None:
+                 load: bool = False, use_time_stamp: bool = True,
+                 init_buffer_path = None, **kwargs) -> None:
         LoggingBase.__init__(self)
 
         if spec_file:
@@ -92,6 +93,8 @@ class AutoRegSearch(LoggingBase):
         self.important_sampling = params['important_sampling']
         self.visited_dist: Optional[nn.Module] = None
 
+        self.init_buffer_paths = init_buffer_path
+
         eval_fn = params['eval_fn']
         try:
             self.fn = registered_functions[eval_fn]
@@ -107,7 +110,7 @@ class AutoRegSearch(LoggingBase):
 
         # hacky version of passing input vectors around
         self.input_vectors_norm = [np.linspace(start=-1.0, stop=1.0, dtype='float32',
-                                               num=21) for _ in range(self.ndim)]
+                                               num=100) for _ in range(self.ndim)]
         self.input_vectors = [self.input_scale * vec for vec in self.input_vectors_norm]
         # TODO: remove this hacky way of keeping track of delta
         self.delta = self.input_vectors_norm[0][-1] - self.input_vectors_norm[0][-2]
@@ -468,6 +471,21 @@ class AutoRegSearch(LoggingBase):
         self.opt = optim.Adam(params, lr=self.lr, weight_decay=0)
         self.buffer = CacheBuffer(self.mode, self.goal, self.cut_off)
 
+        if self.init_buffer_paths:
+            for path in self.init_buffer_paths:
+                # init_buffer can be either the final buffer of another algorithm (checkpoint.tar)
+                # or the init_buffer of another one (init_buffer.pickle)
+                if path.endswith('checkpoint.tar'):
+                    ref_buffer: CacheBuffer = torch.load(path, map_location=self.device)['buffer']
+                else:
+                    ref_buffer: CacheBuffer = read_pickle(self.init_buffer_paths)['init_buffer']
+
+                for ind in ref_buffer.db_set:
+                    self.buffer.add_samples(ind.item[None, :], ind.item_ind[None, :],
+                                            np.array([ind.val]))
+
+            print('Buffer initialized with the provided initialization.')
+
     def setup_model_state(self):
         # load the model or proceed without loading checkpoints
         if self.load:
@@ -489,9 +507,10 @@ class AutoRegSearch(LoggingBase):
             top_means=dict(top_20=[], top_40=[], top_60=[])
             self.model.eval()
             self.collect_samples(self.n_init_samples, uniform=True)
+            write_pickle(self.work_dir / 'init_buffer.pickle', dict(init_buffer=self.buffer))
             # train the init model
             self.model.train()
-            self.train(0, self.n_init_samples)
+            self.train(0, self.init_nepochs)
 
             if self.ndim == 2:
                 _, xdata_ind = self.sample_model(1000, model=self.model)
