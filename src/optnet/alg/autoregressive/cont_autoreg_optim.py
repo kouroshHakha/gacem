@@ -29,11 +29,13 @@ from ...data.buffer import CacheBuffer
 from ...models.made import MADE
 from ..random.random import Random
 from ...data.vector import index_to_xval
+from ..utils.weight_compute import weight
 
 from ...viz.plot import (
-    plot_pca_2d, plt_hist2D, plot_cost, plot_learning_with_epochs
+    plot_pca_2d, plt_hist2D, plot_cost, plot_learning_with_epochs, plot_x_y
 )
 
+from sortedcontainers import SortedList
 
 class AutoRegSearch(LoggingBase):
 
@@ -89,6 +91,8 @@ class AutoRegSearch(LoggingBase):
         # whether to run 1000 epochs of training for the later round of iteration
         self.full_training = params['full_training_last']
         self.input_scale = params['input_scale']
+        self.fixed_sigma = params.get('fixed_sigma', None)
+        self.on_policy = params.get('on_policy', False)
 
         self.important_sampling = params['important_sampling']
         self.visited_dist: Optional[nn.Module] = None
@@ -119,6 +123,8 @@ class AutoRegSearch(LoggingBase):
         self.params_min = np.array([0] * self.ndim)
         self.params_max = np.array([len(x) - 1 for x in self.input_vectors])
 
+        self.fvals = SortedList()
+
     @classmethod
     def set_seed(cls, seed):
         random.seed(seed)
@@ -135,7 +141,8 @@ class AutoRegSearch(LoggingBase):
         xin = xin.to(self.device)
         xhat = model(xin)
         dim = self.ndim
-        coeffs = torch.stack([xhat[..., i::dim*3] for i in range(dim)], dim=-2)
+        nparams_per_dim_mix = 2 if self.fixed_sigma else 3
+        coeffs = torch.stack([xhat[..., i::dim*nparams_per_dim_mix] for i in range(dim)], dim=-2)
         # Note: coeffs was previously interpreted as log_coeffs
         # interpreting outputs if NN as log is dangerous, can result in Nan's.
         # solution: here they should be positive and should add up to 1, sounds familiar? softmax!
@@ -145,13 +152,17 @@ class AutoRegSearch(LoggingBase):
         xb = xin[..., None] + torch.zeros(coeffs.shape, device=self.device)
 
         if self.base_fn in ['logistic', 'normal']:
-            means = torch.stack([xhat[..., i+dim::dim*3] for i in range(dim)], dim=-2)
-            log_sigma = torch.stack([xhat[..., i+2*dim::dim*3] for i in range(dim)], dim=-2)
-            # put a cap on the value of output so that it does not blow up
-            log_sigma = torch.min(log_sigma, torch.ones(log_sigma.shape).to(self.device) * 50)
-            # put a bottom on the value of output so that it does not diminish and becomes zero
-            log_sigma = torch.max(log_sigma, torch.ones(log_sigma.shape).to(self.device) * (-40))
-            sigma = log_sigma.exp()
+            means = torch.stack([xhat[..., i+dim::dim*nparams_per_dim_mix] for i in range(dim)],
+                                dim=-2)
+            if self.fixed_sigma is None:
+                log_sigma = torch.stack([xhat[..., i+2*dim::dim*3] for i in range(dim)], dim=-2)
+                # put a cap on the value of output so that it does not blow up
+                log_sigma = torch.min(log_sigma, torch.ones(log_sigma.shape).to(self.device) * 50)
+                # put a bottom on the value of output so that it does not diminish and becomes zero
+                log_sigma = torch.max(log_sigma, torch.ones(log_sigma.shape).to(self.device) * (-40))
+                sigma = log_sigma.exp()
+            else:
+                sigma = self.fixed_sigma
 
             if self.base_fn == 'logistic':
                 plus_cdf = cdf_logistic(xb + delta / 2, means, sigma)
@@ -160,6 +171,9 @@ class AutoRegSearch(LoggingBase):
                 plus_cdf = cdf_normal(xb + delta / 2, means, sigma)
                 minus_cdf = cdf_normal(xb - delta / 2, means, sigma)
         elif self.base_fn == 'uniform':
+            # does not work with self.fixed_sigma
+            if self.fixed_sigma:
+                raise ValueError('base_fn cannot be uniform when fixed_sigma is given!')
             center = torch.stack([xhat[..., i+dim::dim*3] for i in range(dim)], dim=-2)
             # normalize center between [-1,1] to cover all the space
             center = 2 * (center - center.min()) / (center.max() - center.min() + eps) - 1
@@ -383,6 +397,7 @@ class AutoRegSearch(LoggingBase):
             org_sample_list = [vecs[index][pos] for index, pos in enumerate(xnew_id_np[0, :])]
             xsample = np.array(org_sample_list, dtype='float32')
             fval = self.fn(xsample[None, :])
+            self.fvals.add(fval)
 
             norm_sample_list = [norm_vecs[index][pos] for index, pos in enumerate(xnew_id_np[0, :])]
             norm_sample = np.array(norm_sample_list, dtype='float32')
@@ -404,9 +419,26 @@ class AutoRegSearch(LoggingBase):
         out_samples = np.floor(out_samples).astype('int')
         return out_samples
 
+    def _sample_model_with_weights(self, nsample):
+        xsample, xsample_ids, fvals = self._sample_model_for_eval(nsample)
+        xsample_norm = index_to_xval(self.input_vectors_norm, xsample_ids)
+        ncut = int(self.cut_off * len(fvals))
+        if self.mode == 'ge':
+            fval_avg = float(np.mean(np.sort(fvals)[-ncut:]))
+        else:
+            fval_avg = float(np.mean(np.sort(fvals)[:ncut]))
+
+        weights = weight(fvals, self.goal, fval_avg, self.mode)
+        weights /= weights.max()
+        return np.stack([xsample_norm, xsample_ids], axis=1), weights
+
     def train(self, iter_cnt: int, nepochs: int, split=1.0):
         # treat the sampled data as a static data set and take some gradient steps on it
-        xtr, xte, wtr, wte = self.buffer.draw_tr_te_ds(split=split)
+        if self.on_policy and iter_cnt != 0:
+            # TODO: this is a stupid implementation, but ok for now
+            xtr, wtr = self._sample_model_with_weights(self.nsamples)
+        else:
+            xtr, xte, wtr, wte = self.buffer.draw_tr_te_ds(split=split)
 
         if self.ndim == 2:
             fpath = self.work_dir / get_full_name(name='dist', prefix='training',
@@ -460,9 +492,12 @@ class AutoRegSearch(LoggingBase):
 
     def setup_model(self):
         dim = self.ndim
-        self.model: nn.Module = MADE(dim, self.hiddens, dim * 3 * self.nr_mix, seed=self.seed,
+        nparams_per_dim_mix = 2 if self.fixed_sigma else 3
+        self.model: nn.Module = MADE(dim, self.hiddens,
+                                     dim * nparams_per_dim_mix * self.nr_mix, seed=self.seed,
                                      natural_ordering=True)
-        self.visited_dist: nn.Module = MADE(dim, self.hiddens, dim * 3 * self.nr_mix,
+        self.visited_dist: nn.Module = MADE(dim, self.hiddens,
+                                            dim * nparams_per_dim_mix * self.nr_mix,
                                             seed=self.seed, natural_ordering=True)
         self.model.to(self.device)
         self.visited_dist.to(self.device)
@@ -557,9 +592,12 @@ class AutoRegSearch(LoggingBase):
             sim_cnt_list.append(self.buffer.size)
             n_sols_in_buffer.append(self.buffer.n_sols)
             sample_cnt_list.append(self.buffer.tot_freq)
-            top_means['top_20'].append(self.buffer.topn_mean(20))
-            top_means['top_40'].append(self.buffer.topn_mean(40))
-            top_means['top_60'].append(self.buffer.topn_mean(60))
+            top_means['top_20'].append(np.mean(self.fvals[:20]))
+            top_means['top_40'].append(np.mean(self.fvals[:40]))
+            top_means['top_60'].append(np.mean(self.fvals[:60]))
+            # top_means['top_20'].append(self.buffer.topn_mean(20))
+            # top_means['top_40'].append(self.buffer.topn_mean(40))
+            # top_means['top_60'].append(self.buffer.topn_mean(60))
 
             self.collect_samples(self.nsamples)
             avg_cost.append(self.buffer.mean)
@@ -591,6 +629,10 @@ class AutoRegSearch(LoggingBase):
 
         plot_learning_with_epochs(fpath=self.work_dir / 'learning_curve.png', training=tr_losses)
         plot_cost(avg_cost, fpath=self.work_dir / 'cost.png')
+        plot_x_y(sample_cnt_list, n_sols_in_buffer,
+                 #annotate=sim_cnt_list,marker='s', fillstyle='none'
+                 fpath=self.work_dir / 'n_sols.png',
+                 xlabel='n_freq', ylabel=f'n_sols')
 
     def _sample_model_for_eval(self, nsamples) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         _, sample_ids = self.sample_model(nsamples, model=self.model)
