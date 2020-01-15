@@ -18,6 +18,8 @@ from ...data.buffer import CacheBuffer
 from ...viz.plot import plot_pca_2d, plt_hist2D, plot_cost, plot_fn2d, show_solution_region, plot_x_y
 from ...data.vector import index_to_xval
 
+from sortedcontainers import SortedList
+
 class CEM:
     """
     The vanilla implementation of Cross Entropy method with gaussian distributions
@@ -215,6 +217,9 @@ class CEMSearch(LoggingBase):
         self.buffer = CacheBuffer(self.mode, self.goal, self.cut_off,
                                   with_frequencies=self.allow_repeated)
 
+        self.buffer_temp = {}
+        self.fvals = SortedList()
+
     @classmethod
     def set_seed(cls, seed):
         random.seed(seed)
@@ -250,7 +255,11 @@ class CEMSearch(LoggingBase):
                 in_buffer = xsample in self.buffer
                 # look up buffer, see if already evaluated
                 fval = self.buffer[xsample] if in_buffer else self.fn(xsample)
-                self.buffer.add_samples(xsample[None, ...], sample[None, ...], fval[None, ...])
+                self.fvals.add(fval)
+                if fval < self.goal:
+                    self.buffer_temp[xsample.tostring()] = None
+                if not self.on_policy:
+                    self.buffer.add_samples(xsample[None, ...], sample[None, ...], fval[None, ...])
 
                 if self.allow_repeated or not in_buffer:
                     new_samples.append(sample)
@@ -459,12 +468,18 @@ class CEMSearch(LoggingBase):
         while iter_cnt < self.niter:
             print(f'iter {iter_cnt}')
             # ---- update plotting variables
-            sim_cnt_list.append(self.buffer.size)
-            n_sols_in_buffer.append(self.buffer.n_sols)
-            sample_cnt_list.append(self.buffer.tot_freq)
-            top_means['top_20'].append(self.buffer.topn_mean(20))
-            top_means['top_40'].append(self.buffer.topn_mean(40))
-            top_means['top_60'].append(self.buffer.topn_mean(60))
+            # sim_cnt_list.append(self.buffer.size)
+            # n_sols_in_buffer.append(self.buffer.n_sols)
+            # sample_cnt_list.append(self.buffer.tot_freq)
+            # top_means['top_20'].append(self.buffer.topn_mean(20))
+            # top_means['top_40'].append(self.buffer.topn_mean(40))
+            # top_means['top_60'].append(self.buffer.topn_mean(60))
+            sim_cnt_list.append((iter_cnt + 1) * self.nsamples + self.n_init_samples)
+            n_sols_in_buffer.append(len(self.buffer_temp))
+            sample_cnt_list.append((iter_cnt + 1) * self.nsamples + self.n_init_samples)
+            top_means['top_20'].append(np.mean(self.fvals[:20]))
+            top_means['top_40'].append(np.mean(self.fvals[:40]))
+            top_means['top_60'].append(np.mean(self.fvals[:60]))
 
             samples, sample_fvals = self.collect_samples(self.nsamples)
             avg_cost.append(sample_fvals.mean() if self.on_policy else self.buffer.mean)
