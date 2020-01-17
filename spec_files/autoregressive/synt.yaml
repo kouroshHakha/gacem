@@ -1,31 +1,30 @@
 alg_class: optnet.alg.autoregressive.cont_autoreg_optim.AutoRegSearch
 root_dir: data
 params:
-  prefix: ackley_20d_gacem
-  suffix: ns25_lay3x100_e10_b10_nr40_csp_onp_fixed_sigma_cont
+  prefix: synt_5d_gacem
+  suffix: ns25_lay2x100_e10_b10_nr20_csp_onp_fixed_sigma
   base_fn: normal
   batch_size: 16
   beta: 10
   cut_off: 10
-  eval_fn: ackley
+  eval_fn: synt
   fixed_sigma: 0.05
-  full_training_last: false
-  goal_value: 3.5
-  hidden_list: [100, 100, 100]
+  full_training_last: true
+  goal_value: 2
+  hidden_list: [100, 100]
   init_nepochs: 50
   input_scale: 5.0
   lr: 0.005
   mode: le
   n_init_samples: 50
-  ndim: 20
+  ndim: 5
   nepochs: 10
-  niter: 101
-  nr_mix: 40
+  niter: 41
+  nr_mix: 20
   nsamples: 25
   on_policy: true
   only_positive: true
   problem_type: csp
   seed: 10
-  weight_type: cont
   normalize_weight: True
   add_entropy_before_normalization: False

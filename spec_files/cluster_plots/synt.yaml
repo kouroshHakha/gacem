@@ -1,0 +1,27 @@
+root_dir: data
+nsamples: 500
+prefix: 'synt_10d'
+method: tsne
+seed: 20
+solution_only: True
+models:
+#    # 2d
+#    gacem: synt_2d_gacem_20200115171735_co0p4_ns25_lay3x5_e10_b10_nr10_fixed_sig0.1_optim
+#    cem: synt_2d_cem_gauss_20200115171456_optim_on_co0p4_ns25_sig10
+#    # 3d
+#    gacem_s20: synt_3d_gacem_20200115171904_co0p4_ns25_lay3x5_e10_b10_nr10_fixed_sig0.1_optim_s20
+#    gacem_s10: synt_3d_gacem_20200115173842_co0p4_ns25_lay3x5_e10_b10_nr10_fixed_sig0.1_optim_s10
+#    gacem_csp_s10: synt_3d_gacem_20200115174044_co0p4_ns25_lay3x5_e10_b10_nr10_fixed_sig0.1_csp_s10
+#    cem: synt_3d_cem_gauss_20200115172118_optim_on_co0p4_ns25_sig10
+#    # 5d
+#    gacem_s10: synt_5d_gacem_20200115175414_co0p4_ns25_lay3x5_e10_b10_nr10_fixed_sig0.1_optim_s10
+#    gacem_s20_lay3x15: synt_5d_gacem_20200115180821_co0p4_ns25_lay3x15_e10_b10_nr10_fixed_sig0.1_optim_s20
+#    gacem_s10_lay3x15_no_fixed_sigma_csp: synt_5d_gacem_20200115181125_co0p4_ns25_lay3x15_e10_b10_nr10_csp_s20
+#    gacem_s20_lay3x15_no_fixed_sigma_optim: synt_5d_gacem_20200115180955_co0p4_ns25_lay3x15_e10_b10_nr10_optim_s20
+#    ns5_lay3x5_e10_b10_nr20_csp_s20: synt_5d_gacem_20200115182617_co0p4_ns5_lay3x5_e10_b10_nr20_csp_s20
+#    onp: synt_5d_gacem_20200115191440_co0p4_ns3_lay2x100_e10_b10_nr20_csp_s20_onp
+#    cem: synt_5d_cem_gauss_20200115175207_optim_on_co0p4_ns25_sig10
+
+    # 10d
+    gacem_onp_b10: synt_10d_gacem_20200115191658_co0p4_ns3_lay2x100_e10_b10_nr20_csp_s20_onp
+    cem: synt_10d_cem_gauss_20200115184936_optim_on_co0p4_ns25_sig10
