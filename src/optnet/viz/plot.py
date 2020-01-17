@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import warnings
 from pathlib import Path
+import random
 from mpl_toolkits import mplot3d
 import itertools
 
@@ -169,10 +170,13 @@ def plot_x_y(x, y=None, annotate=None, ax=None, fpath='', show_fig=False, xlabel
 def scatter2d(data: np.ndarray, labels: Optional[np.ndarray] = None,
               label_mapping: Optional[Mapping[int, str]] = None,
               ax=None, fpath='', show_fig=False, fig_title=None, **kwargs):
+    random.seed(20)
     ax = _get_ax(ax)
-    markers = (',', '+', '.', 'o', '*')
+    markers = (',', '+', 'o', '*')
     colors = ('r', 'g', 'b', 'c', 'm', 'y', 'k')
-    marker_color = itertools.product(markers, colors)
+    marker_color = list(itertools.product(markers, colors))
+    random.shuffle(marker_color)
+    marker_color = iter(marker_color)
     if labels is not None:
         for label in np.unique(labels):
             pos = (labels == label)
