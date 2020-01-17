@@ -91,7 +91,7 @@ def weight(zi: np.ndarray, z0: Union[np.ndarray, float], z_avg: float, mode='ge'
 
     return weights
 
-def weight2(zi: np.ndarray, z0: Union[np.ndarray, float], z_avg: float, mode='ge'):
+def weight2(zi: np.ndarray, z0: Union[np.ndarray, float], z_avg: float, optim_mode='ge', mode='csp'):
     """Computes weights as a function of value, goal, and average value
 
     if zi is better than z_avg: `w = 1`
@@ -104,16 +104,23 @@ def weight2(zi: np.ndarray, z0: Union[np.ndarray, float], z_avg: float, mode='ge
         goal value per element in zi or a single float for all elements
     z_avg: float
         average value
-    mode: str
+    optim_mode: str
         'ge' or 'le', ge means satisfying is equivalent to zi >= z0, le means zi <= z0.
+    mode: str
+        'csp' or 'optim' wheter it is optimization or constraint satisfaction problem
     """
     is_ok = np.greater_equal if mode == 'ge' else np.less_equal
 
     weights = np.zeros(shape=zi.shape)
     all_ind = np.arange(zi.shape[0])
 
-    # weight is 1 for all those which satisfy the constraint
-    ok_ind = all_ind[is_ok(zi, np.minimum(z0, z_avg) if mode == 'ge' else np.maximum(z0, z_avg))]
+    if mode == 'csp':
+        # weight is 1 for all those which satisfy the constraint
+        cond = is_ok(zi, np.minimum(z0, z_avg) if optim_mode == 'ge' else np.maximum(z0, z_avg))
+    else:
+        # weight is 1 for all those which better than z_avg
+        cond = is_ok(zi, z_avg if optim_mode == 'ge' else z_avg)
+    ok_ind = all_ind[cond]
     weights[ok_ind] = 1
 
     return weights
