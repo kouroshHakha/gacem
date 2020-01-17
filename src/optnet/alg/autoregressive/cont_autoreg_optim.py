@@ -29,7 +29,7 @@ from ...data.buffer import CacheBuffer
 from ...models.made import MADE
 from ..random.random import Random
 from ...data.vector import index_to_xval, xval_to_index
-from ..utils.weight_compute import weight2
+from ..utils.weight_compute import weight2, weight
 
 from ...viz.plot import (
     plot_pca_2d, plt_hist2D, plot_cost, plot_learning_with_epochs, plot_x_y
@@ -108,6 +108,7 @@ class AutoRegSearch(LoggingBase):
 
         self.normalize_weight = params.get('normalize_weight', True)
         self.add_ent_before_norm = params.get('add_entropy_before_normalization', False)
+        self.weight_type = params.get('weight_type', 'ind')
 
         self.model_visited = self.explore_coeff is not None or self.important_sampling
 
@@ -457,7 +458,11 @@ class AutoRegSearch(LoggingBase):
         xsample_norm = index_to_xval(self.input_vectors_norm, xsample_ids)
         zavg = sorted(fvals, reverse=(self.mode == 'ge'))[self.cut_off]
         print(f'fref: {zavg}')
-        weights = weight2(fvals, self.goal, zavg, self.mode, self.problem_type)
+
+        if self.weight_type == 'ind':
+            weights = weight2(fvals, self.goal, zavg, self.mode, self.problem_type)
+        else:
+            weights = weight(fvals, self.goal, zavg, self.mode)
         # weights = self.update_weight(xsample, weights)
         return np.stack([xsample_norm, xsample_ids], axis=1), weights
 
