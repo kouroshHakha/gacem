@@ -111,13 +111,14 @@ class CacheElement:
 class CacheBuffer:
     """Buffer with caching capabilities"""
 
-    def __init__(self, mode, goal, cut_off=0.2, with_frequencies = False):
+    def __init__(self, mode, goal, cut_off=10, with_frequencies = False, problem_type = 'csp'):
         self.mode = mode
         self.goal = goal
         self.cut_off = cut_off
+        self.problem_type = 'csp'
         self._running_mean = float('inf')
         self.with_freq = with_frequencies
-
+        self.zavg = float('inf') if self.mode == 'le' else float('-inf')
 
         # use a dictionary for fast lookup of existance (values are frequency of repetition)
         self.db_set = {}
@@ -131,18 +132,20 @@ class CacheBuffer:
 
     @property
     def mean(self):
-        n = max(int(self.size * self.cut_off), 10) # max is for handling corner cases
-        ret = heapq.nsmallest(n, self.db_pq)
-        vals = [x[0] for x in ret]
-        new_mean = float(np.mean(vals))
-        if new_mean < self._running_mean:
-            self._running_mean = new_mean
-        return self._running_mean
+        return self.topn_mean(self.cut_off)
+        # outdated mean
+        # n = max(int(self.size * self.cut_off), 10) # max is for handling corner cases
+        # ret = heapq.nsmallest(n, self.db_pq)
+        # vals = [x[0] for x in ret]
+        # new_mean = float(np.mean(vals))
+        # if new_mean < self._running_mean:
+        #     self._running_mean = new_mean
+        # return self._running_mean
 
     def topn_mean(self, n):
         ret = heapq.nsmallest(n, self.db_pq)
         vals = [x[0] for x in ret]
-        return np.mean(vals)
+        return float(np.mean(vals))
 
     @property
     def tot_freq(self):
@@ -184,7 +187,12 @@ class CacheBuffer:
             raise ValueError('mean is infinite')
 
         # weight() is smooth weight2() is and indicator function similar to CEM
-        weights = weight(values_np, self.goal, self.mean, self.mode)
+        self.zavg = heapq.nsmallest(self.cut_off, self.db_pq)[-1][0]
+        # weights = weight2(values_np, self.goal, self.zavg, self.mode, self.problem_type)
+        if self.problem_type == 'optim':
+            raise ValueError('make problem csp')
+        else:
+            weights = weight(values_np, self.goal, self.zavg, self.mode)
         # normalize weights to have a max of 1
         if normalize_weight:
             weights_norm = weights / weights.max()
