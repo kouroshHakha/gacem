@@ -291,9 +291,9 @@ class CEMSearch(LoggingBase):
             top_index = (weights == 1).sum(-1).astype('int')
 
         if self.elite_criteria == 'optim':
-            top_index = math.ceil(self.cut_off * nsamples)
+            top_index = self.cut_off
         elif self.elite_criteria == 'csp':
-            top_index = max(top_index, math.ceil(self.cut_off * nsamples))
+            top_index = max(top_index, min(self.cut_off, nsamples))
 
         top_samples = sorted_samples[:top_index]
 
@@ -487,7 +487,6 @@ class CEMSearch(LoggingBase):
             self.cem.fit(top_samples)
 
             if (iter_cnt + 1) % 10 == 0 and self.ndim == 2:
-            # if self.ndim == 2 and (iter_cnt + 1) in [1, 2, 3, 10]:
                 xdata_ind = self.sample_model(1000)
                 fpath = self.work_dir / get_full_name(name='dist', prefix='training',
                                                       suffix=f'{iter_cnt+1}_after')
