@@ -6,13 +6,13 @@ params:
   seed: 10
   ndim: 20
   base_fn: gauss
-  cut_off: 0.4
+  cut_off: 10
   fn: ackley
   goal_value: 3.5
   input_scale: 5.0
   mode: le
   n_init_samples: 50
-  niter: 201
+  niter: 101
   nsamples: 25
   num_input_points: 100
   allow_repeated: True

@@ -6,7 +6,7 @@ params:
   seed: 10
   ndim: 2
   base_fn: gauss
-  cut_off: 0.4
+  cut_off: 10
   fn: levy
   goal_value: 0.4
   input_scale: 10.0

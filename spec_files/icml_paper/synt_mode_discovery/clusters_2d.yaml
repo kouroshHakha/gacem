@@ -1,0 +1,10 @@
+root_dir: data
+nsamples: 500
+prefix: 'synt_3d'
+method: tsne
+seed: 10
+solution_only: True
+models:
+  cem: synt_2d_cem_gauss_optim_on_co0p4_ns25_sig10/s10
+  gacem_off: synt_2d_gacem_ns25_lay2x100_e10_b10_nr20_csp_off_fixed_sigma/s10
+  gacem_onp: synt_2d_gacem_ns25_lay2x100_e10_b10_nr20_csp_onp_fixed_sigma/s10

@@ -8,7 +8,7 @@ params:
   base_fn: gauss
   cut_off: 0.4
   fn: styblinski
-  goal_value: 20
+  goal_value: 13
   input_scale: 5.0
   mode: le
   n_init_samples: 50

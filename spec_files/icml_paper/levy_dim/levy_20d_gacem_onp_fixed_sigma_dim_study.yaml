@@ -2,25 +2,27 @@ alg_class: optnet.alg.autoregressive.cont_autoreg_optim.AutoRegSearch
 root_dir: data
 params:
   prefix: levy_20d_gacem
-  suffix: co0p4_ns100_lay3x20_e10_b10_nr20_init_hi
+  suffix: ns25_lay3x100_e10_b10_nr40_csp_onp_fixed_sigma
   seed: 10
   ndim: 20
-  goal_value: 0.4
-  hidden_list: [20, 20, 20]
+  goal_value: 8
+  hidden_list: [100, 100, 100]
   mode: le
   batch_size: 16
   nepochs: 10
-  nsamples: 100
-  n_init_samples: 1000
+  nsamples: 25
+  n_init_samples: 50
   init_nepochs: 50
-  cut_off: 0.6
+  cut_off: 10
   niter: 101
-  lr: 5e-4
+  lr: 5e-3
   beta: 10
   base_fn: normal
-  nr_mix: 20
+  nr_mix: 40
   only_positive: True
   full_training_last: False
   input_scale: 10.0
   eval_fn: levy
-  important_sampling: False
+  fixed_sigma: 0.05
+  problem_type: csp
+  on_policy: True

@@ -5,7 +5,7 @@ params:
   suffix: co0p4_ns5_lay3x20_e5_b10_nr20
   seed: 10
   ndim: 5
-  goal_value: 20
+  goal_value: 13
   hidden_list: [20, 20, 20]
   mode: le
   batch_size: 16
