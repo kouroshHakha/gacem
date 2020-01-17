@@ -28,8 +28,8 @@ from ...torch.dist import cdf_logistic, cdf_normal, cdf_uniform
 from ...data.buffer import CacheBuffer
 from ...models.made import MADE
 from ..random.random import Random
-from ...data.vector import index_to_xval
-from ..utils.weight_compute import weight
+from ...data.vector import index_to_xval, xval_to_index
+from ..utils.weight_compute import weight2
 
 from ...viz.plot import (
     plot_pca_2d, plt_hist2D, plot_cost, plot_learning_with_epochs, plot_x_y
@@ -93,9 +93,28 @@ class AutoRegSearch(LoggingBase):
         self.input_scale = params['input_scale']
         self.fixed_sigma = params.get('fixed_sigma', None)
         self.on_policy = params.get('on_policy', False)
+        self.problem_type = params.get('problem_type', 'csp')
 
-        self.important_sampling = params['important_sampling']
+        self.allow_repeated = params.get('allow_repeated', False)
+        self.allow_repeated = self.on_policy or self.allow_repeated
+
+        self.important_sampling = params.get('important_sampling', False)
         self.visited_dist: Optional[nn.Module] = None
+        self.visited_fixed_sigma = params.get('visited_fixed_sigma', None)
+        self.visited_nr_mix = params.get('visited_nr_mix', None)
+
+        self.explore_coeff = params.get('explore_coeff', None)
+        self.nepoch_visited = params.get('nepoch_visited', -1)
+
+        self.normalize_weight = params.get('normalize_weight', True)
+        self.add_ent_before_norm = params.get('add_entropy_before_normalization', False)
+
+        self.model_visited = self.explore_coeff is not None or self.important_sampling
+
+        if self.model_visited and self.nepoch_visited == -1:
+            raise ValueError('nepoch_visited should be specified when a model is '
+                             'learning visited states')
+
 
         self.init_buffer_paths = init_buffer_path
 
@@ -141,7 +160,13 @@ class AutoRegSearch(LoggingBase):
         xin = xin.to(self.device)
         xhat = model(xin)
         dim = self.ndim
-        nparams_per_dim_mix = 2 if self.fixed_sigma else 3
+        if model is self.model:
+            nparams_per_dim_mix = 2 if self.fixed_sigma else 3
+            sigma_fixed = self.fixed_sigma is not None
+        else:
+            nparams_per_dim_mix = 2 if self.visited_fixed_sigma else 3
+            sigma_fixed = self.visited_fixed_sigma is not None
+
         coeffs = torch.stack([xhat[..., i::dim*nparams_per_dim_mix] for i in range(dim)], dim=-2)
         # Note: coeffs was previously interpreted as log_coeffs
         # interpreting outputs if NN as log is dangerous, can result in Nan's.
@@ -154,15 +179,15 @@ class AutoRegSearch(LoggingBase):
         if self.base_fn in ['logistic', 'normal']:
             means = torch.stack([xhat[..., i+dim::dim*nparams_per_dim_mix] for i in range(dim)],
                                 dim=-2)
-            if self.fixed_sigma is None:
+            if sigma_fixed:
+                sigma = self.fixed_sigma if model is self.model else self.visited_fixed_sigma
+            else:
                 log_sigma = torch.stack([xhat[..., i+2*dim::dim*3] for i in range(dim)], dim=-2)
                 # put a cap on the value of output so that it does not blow up
                 log_sigma = torch.min(log_sigma, torch.ones(log_sigma.shape).to(self.device) * 50)
                 # put a bottom on the value of output so that it does not diminish and becomes zero
                 log_sigma = torch.max(log_sigma, torch.ones(log_sigma.shape).to(self.device) * (-40))
                 sigma = log_sigma.exp()
-            else:
-                sigma = self.fixed_sigma
 
             if self.base_fn == 'logistic':
                 plus_cdf = cdf_logistic(xb + delta / 2, means, sigma)
@@ -210,7 +235,7 @@ class AutoRegSearch(LoggingBase):
         """Given an input tensor computes the average negative likelihood of observing the inputs"""
         probs = self.get_probs(xin, model=model)
         eps_tens = 1e-15
-        logp_vec = (probs + eps_tens).log10().sum(-1)
+        logp_vec = (probs + eps_tens).log().sum(-1)
 
         if weights is None:
             min_obj = -logp_vec.mean(-1)
@@ -221,13 +246,20 @@ class AutoRegSearch(LoggingBase):
             # obj_term  = - self.buffer.size * (weights * prob_x).data
             # ent_term = self.buffer.size * (self.beta * (torch.tensor(1) + logp_vec)).data
             obj_term  = - weights.data
-            ent_term = (self.beta * (1 + logp_vec)).data
+
+            # TODO: Fix this bad code
+            if self.add_ent_before_norm:
+                ent_term = 0
+            else:
+                ent_term = (self.beta * (1 + logp_vec)).data
 
             # important sampling coefficient (with frozen gradient)
             if self.important_sampling:
                 probs_visited = self.get_probs(xin, model=self.visited_dist)
-                probs_visited = probs_visited.prod(-1).to(self.device)
-                is_coeff = 10**(-self.ndim * 2) / (probs_visited + eps_tens)
+                logp_visited = (probs_visited + eps_tens).log().sum(-1).to(logp_vec)
+                # is_coeff = (torch.tensor(10**(-self.ndim * 2)).log() - logp_visited).exp()
+                is_coeff = torch.clamp((logp_vec - logp_visited).exp(), 1e-15, 1e15).data
+                is_coeff = is_coeff / is_coeff.max()
             else:
                 is_coeff = 1
 
@@ -343,10 +375,11 @@ class AutoRegSearch(LoggingBase):
             samples_ind = torch.stack(samples_ind, dim=0)
             return samples, samples_ind
 
-    def run_epoch(self, data: np.ndarray, weights: np.ndarray, mode='train',
+    def run_epoch(self, data: np.ndarray, weights: np.ndarray, model: nn.Module, mode='train',
                   debug=False):
-        for model in [self.visited_dist, self.model]:
-            model.train() if mode == 'train' else model.eval()
+
+        # for model in [self.visited_dist, self.model]:
+        model.train() if mode == 'train' else model.eval()
 
         n, dim,  _ = data.shape
 
@@ -364,15 +397,15 @@ class AutoRegSearch(LoggingBase):
             wb_tens = torch.from_numpy(wb).to(self.device)
 
             xin = xb_tens[:, 0, :]
-            loss = self.get_nll(xin, weights=wb_tens, model=self.model, debug=debug)
+            if model is self.model:
+                loss = self.get_nll(xin, weights=wb_tens, model=self.model, debug=debug)
+            else:
+                loss = self.get_nll(xin, model=self.visited_dist)
+
             if mode == 'train':
                 self.opt.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.model.parameters(), 1e3)
-                if self.important_sampling:
-                    visited_model_loss = self.get_nll(xin, model=self.visited_dist)
-                    visited_model_loss.backward()
-                    nn.utils.clip_grad_norm_(self.visited_dist.parameters(), 1e3)
                 self.opt.step()
             nll_per_b += loss.to(self.cpu).item() / nstep
 
@@ -402,7 +435,7 @@ class AutoRegSearch(LoggingBase):
             norm_sample_list = [norm_vecs[index][pos] for index, pos in enumerate(xnew_id_np[0, :])]
             norm_sample = np.array(norm_sample_list, dtype='float32')
 
-            if norm_sample not in self.buffer:
+            if self.allow_repeated or norm_sample not in self.buffer:
                 self.buffer.add_samples(norm_sample[None, :], xnew_id_np, fval)
                 new_samples.append(xsample)
                 n_collected += 1
@@ -422,23 +455,91 @@ class AutoRegSearch(LoggingBase):
     def _sample_model_with_weights(self, nsample):
         xsample, xsample_ids, fvals = self._sample_model_for_eval(nsample)
         xsample_norm = index_to_xval(self.input_vectors_norm, xsample_ids)
-        ncut = int(self.cut_off * len(fvals))
-        if self.mode == 'ge':
-            fval_avg = float(np.mean(np.sort(fvals)[-ncut:]))
-        else:
-            fval_avg = float(np.mean(np.sort(fvals)[:ncut]))
-
-        weights = weight(fvals, self.goal, fval_avg, self.mode)
-        weights /= weights.max()
+        zavg = sorted(fvals, reverse=(self.mode == 'ge'))[self.cut_off]
+        print(f'fref: {zavg}')
+        weights = weight2(fvals, self.goal, zavg, self.mode, self.problem_type)
+        # weights = self.update_weight(xsample, weights)
         return np.stack([xsample_norm, xsample_ids], axis=1), weights
+
+    def update_weight(self, xin, wtr):
+        eps_tens = 1e-15
+        xin_tens = torch.from_numpy(xin).to(self.device)
+
+        normalized = False
+        if self.add_ent_before_norm:
+            probs = self.get_probs(xin_tens, model=self.model)
+            logp_vec = (probs + eps_tens).log().sum(-1).cpu().data.numpy()
+
+            ent_term = (1 + logp_vec) / self.ndim
+            ent_term = (ent_term -ent_term.mean()) / (ent_term.std() + eps_tens)
+            # this normalization happens regardless of self.nomralize_weight flag
+            wtr = (wtr - wtr.mean()) / (wtr.std() + eps_tens)
+            wtr = wtr - self.beta * ent_term
+            if self.beta != 0 and self.normalize_weight:
+                wtr = (wtr - wtr.mean()) / (wtr.std() + eps_tens)
+                normalized = True
+
+        # this is just an experimentation
+        # normalize before adding exploration penalty
+        if self.explore_coeff is not None:
+            probs_visited = self.get_probs(xin_tens, model=self.visited_dist)
+            logp_visited = (probs_visited + eps_tens).log().sum(-1) / self.ndim / 2
+
+            probs = self.get_probs(xin_tens, model=self.model)
+            logp_vec = (probs + eps_tens).log().sum(-1)
+            is_coeff = (logp_vec - logp_visited).exp()
+            is_coeff = is_coeff / is_coeff.max()
+            print('std: ',is_coeff.std())
+
+            logp_visited = logp_visited.data.numpy()
+            wtr = wtr - self.explore_coeff * logp_visited / (is_coeff.std() + eps_tens).item()
+            if self.normalize_weight:
+                wtr = (wtr - wtr.mean()) / (wtr.std() + eps_tens)
+                normalized = True
+
+        if not normalized and self.normalize_weight:
+            wtr = (wtr - wtr.mean()) / (wtr.std() + eps_tens)
+
+        return wtr
 
     def train(self, iter_cnt: int, nepochs: int, split=1.0):
         # treat the sampled data as a static data set and take some gradient steps on it
+        print('-'*50)
         if self.on_policy and iter_cnt != 0:
             # TODO: this is a stupid implementation, but ok for now
             xtr, wtr = self._sample_model_with_weights(self.nsamples)
         else:
-            xtr, xte, wtr, wte = self.buffer.draw_tr_te_ds(split=split)
+            xtr, xte, wtr, wte = self.buffer.draw_tr_te_ds(split=split,
+                                                           normalize_weight=False)
+
+        if self.model_visited:
+            print('Training buffer model:')
+            nepochs = self.init_nepochs if iter_cnt == 0 else self.nepoch_visited
+            for epoch_id in range(nepochs):
+                tr_nll = self.run_epoch(xtr, wtr, self.visited_dist, mode='train', debug=False)
+                print(f'[visit_{iter_cnt}] epoch {epoch_id} loss = {tr_nll}')
+            print('Finshed training buffer model')
+
+            if (iter_cnt) % 10 == 0 and self.ndim == 2:
+                _, xvisited_ind = self.sample_model(1000, model=self.visited_dist)
+                self._plot_dist(xvisited_ind, 'dist', 'visited', f'{iter_cnt+1}')
+
+        update_w = self.update_weight(xtr[:, 0, :], wtr)
+        # debug
+        if iter_cnt < -1:
+            values = index_to_xval(self.input_vectors, xtr[:, 1, :].astype('int'))
+            fvals = self.fn(values)
+            wtr_norm = (wtr - wtr.mean()) / (wtr.std() + 1e-15)
+            fref = sorted(fvals)[self.cut_off-1]
+            print(f'fred = {fref}')
+            cond = np.logical_and(fvals >= 20, fvals <= fref)
+            for index, wp, wn, wnorm in zip(xtr[:, 1, :][cond], wtr[cond], update_w[cond], wtr_norm[cond]):
+                print(f'index = {index}, weight_before_update = {wp:.4f}, '
+                      f'weights_norm = {wnorm:.4f}, '
+                      f'weight_after_update = {wn:.4f}')
+            pdb.set_trace()
+
+        wtr = update_w
 
         if self.ndim == 2:
             fpath = self.work_dir / get_full_name(name='dist', prefix='training',
@@ -448,12 +549,12 @@ class AutoRegSearch(LoggingBase):
             plt_hist2D(samples, fpath=fpath, range=np.array([[-s, s], [-s, s]]), cmap='binary')
 
         # per epoch
-        print('-'*50)
         tr_loss = 0
         te_loss = 0
         tr_loss_list = []
+        print(f'Training model: fref = {self.buffer.zavg}')
         for epoch_id in range(nepochs):
-            tr_nll = self.run_epoch(xtr, wtr, mode='train', debug=False)
+            tr_nll = self.run_epoch(xtr, wtr, self.model, mode='train', debug=False)
             tr_loss_list.append(tr_nll)
             tr_loss += tr_nll / self.nepochs
 
@@ -461,10 +562,11 @@ class AutoRegSearch(LoggingBase):
             print(f'[train_{iter_cnt}] epoch {epoch_id} loss = {tr_nll}')
 
             if split < 1:
-                te_nll = self.run_epoch(xte, wte, mode='test')
+                te_nll = self.run_epoch(xte, wte, self.model, mode='test')
                 te_loss += te_nll / self.nepochs
                 print(f'[test_{iter_cnt}] epoch {epoch_id} loss = {te_nll}')
 
+        print('Finished training model.')
         if split < 1:
             return tr_loss, te_loss
 
@@ -473,18 +575,23 @@ class AutoRegSearch(LoggingBase):
     def save_checkpoint(self, saved_dict):
         saved_dict.update(dict(buffer=self.buffer,
                                model_state=self.model.state_dict(),
-                               opt_state=self.opt.state_dict(),
-                               visited=self.visited_dist.state_dict()))
+                               opt_state=self.opt.state_dict()))
+        if self.model_visited:
+            saved_dict.update(dict(visited=self.visited_dist.state_dict()))
         torch.save(saved_dict, self.work_dir / 'checkpoint.tar')
 
     def load_checkpoint(self, ckpt_path: Union[str, Path]):
         s = time.time()
         checkpoint = torch.load(ckpt_path, map_location=self.device)
         self.model.load_state_dict(checkpoint.pop('model_state'))
-        self.visited_dist.load_state_dict(checkpoint.pop('visited'))
+        if self.model_visited:
+            self.visited_dist.load_state_dict(checkpoint.pop('visited'))
+            params = list(self.model.parameters()) + list(self.visited_dist.parameters())
+        else:
+            params = self.model.parameters()
+
         self.opt.load_state_dict(checkpoint.pop('opt_state'))
         # override optimizer with input parameters
-        params = list(self.model.parameters()) + list(self.visited_dist.parameters())
         self.opt = optim.Adam(params, self.lr)
         self.buffer = checkpoint.pop('buffer')
         print(f'Model checkpoint loaded in {time.time() - s:.4f} seconds')
@@ -496,15 +603,20 @@ class AutoRegSearch(LoggingBase):
         self.model: nn.Module = MADE(dim, self.hiddens,
                                      dim * nparams_per_dim_mix * self.nr_mix, seed=self.seed,
                                      natural_ordering=True)
-        self.visited_dist: nn.Module = MADE(dim, self.hiddens,
-                                            dim * nparams_per_dim_mix * self.nr_mix,
-                                            seed=self.seed, natural_ordering=True)
         self.model.to(self.device)
-        self.visited_dist.to(self.device)
+        if self.model_visited:
+            nparams = 2 if self.visited_fixed_sigma else 3
+            self.visited_dist: nn.Module = MADE(dim, self.hiddens,
+                                                dim * nparams * self.visited_nr_mix,
+                                                seed=self.seed, natural_ordering=True)
+            self.visited_dist.to(self.device)
+            params = list(self.model.parameters()) + list(self.visited_dist.parameters())
+        else:
+            params = list(self.model.parameters())
 
-        params = list(self.model.parameters()) + list(self.visited_dist.parameters())
         self.opt = optim.Adam(params, lr=self.lr, weight_decay=0)
-        self.buffer = CacheBuffer(self.mode, self.goal, self.cut_off)
+        self.buffer = CacheBuffer(self.mode, self.goal, self.cut_off, self.allow_repeated,
+                                  self.problem_type)
 
         if self.init_buffer_paths:
             for path in self.init_buffer_paths:
@@ -610,9 +722,7 @@ class AutoRegSearch(LoggingBase):
             tr_losses.append(tr_loss_list)
             if (iter_cnt + 1) % 10 == 0 and self.ndim == 2:
                 _, xdata_ind = self.sample_model(1000, model=self.model)
-                _, xvisited_ind = self.sample_model(1000, model=self.visited_dist)
                 self._plot_dist(xdata_ind, 'dist', 'training', f'{iter_cnt+1}_after')
-                self._plot_dist(xvisited_ind, 'dist', 'visited', f'{iter_cnt+1}')
 
 
             iter_cnt += 1
@@ -730,7 +840,7 @@ class AutoRegSearch(LoggingBase):
         for iter_cnt in range(ntimes):
             samples, _ = self.sample_model(nsamples, self.model)
             probs = self.get_probs(samples, self.model)
-            ent_list.append(-probs.log().mean().item())
+            ent_list.append(-probs.prod(-1).log().mean().item())
 
         ent = float(np.mean(ent_list) / self.ndim)
         print(f'entropy/dim: {ent}')
