@@ -26,3 +26,4 @@ params:
   fixed_sigma: 0.05
   problem_type: csp
   on_policy: True
+  weight_type: 'cont'

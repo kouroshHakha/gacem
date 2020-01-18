@@ -16,6 +16,6 @@ params:
   nsamples: 25
   num_input_points: 100
   allow_repeated: True
-  elite_criteria: 'optim'
+  elite_criteria: csp
   on_policy: False
   average_coeff: 1
