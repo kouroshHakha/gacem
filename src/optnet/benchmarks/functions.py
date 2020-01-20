@@ -32,7 +32,7 @@ def mixture_ackley(x: Union[np.ndarray, numbers.Number]) -> np.ndarray:
 
 def styblinski(x):
     minimum = 39.16599
-    return 0.5 * ((x ** 4).sum(-1) - 16 * (x ** 2).sum(-1) + 5 * x.sum(-1)) / x.shape[-1] + 50
+    return 0.5 * ((x ** 4).sum(-1) - 16 * (x ** 2).sum(-1) + 5 * x.sum(-1)) / x.shape[-1] + minimum
 
 def synt(x):
     return (0.25*(x**4).sum(-1) - 2 * (x**2).sum(-1)) / x.shape[-1] + 5
