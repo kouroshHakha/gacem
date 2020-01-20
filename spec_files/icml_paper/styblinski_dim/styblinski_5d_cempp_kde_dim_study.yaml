@@ -6,9 +6,9 @@ params:
   seed: 10
   ndim: 5
   base_fn: kde
-  cut_off: 0.4
+  cut_off: 10
   fn: styblinski
-  goal_value: 13
+  goal_value: 5
   input_scale: 5.0
   mode: le
   n_init_samples: 50
@@ -16,6 +16,6 @@ params:
   nsamples: 25
   num_input_points: 100
   allow_repeated: True
-  elite_criteria: 'optim'
+  elite_criteria: csp
   on_policy: False
   average_coeff: 1
