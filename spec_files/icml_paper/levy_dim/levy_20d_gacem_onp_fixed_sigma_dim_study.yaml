@@ -14,7 +14,7 @@ params:
   n_init_samples: 50
   init_nepochs: 50
   cut_off: 10
-  niter: 101
+  niter: 151
   lr: 5e-3
   beta: 10
   base_fn: normal
