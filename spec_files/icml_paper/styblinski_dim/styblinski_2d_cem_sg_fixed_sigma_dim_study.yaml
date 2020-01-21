@@ -6,9 +6,9 @@ params:
   seed: 10
   ndim: 2
   base_fn: gauss
-  cut_off: 0.4
+  cut_off: 10
   fn: styblinski
-  goal_value: 20
+  goal_value: 10
   input_scale: 5.0
   mode: le
   n_init_samples: 50
@@ -16,7 +16,7 @@ params:
   nsamples: 25
   num_input_points: 100
   allow_repeated: True
-  elite_criteria: 'optim'
+  elite_criteria: csp
   on_policy: True
   average_coeff: 1
   gauss_sigma: 10
