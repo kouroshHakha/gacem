@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-
-export WORKDIR=$(pwd)
-
-export PYTHONPATH="${WORKDIR}"
-export PYTHONPATH="${PYTHONPATH}:${WORKDIR}/src"
