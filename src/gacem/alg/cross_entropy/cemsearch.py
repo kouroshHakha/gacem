@@ -10,13 +10,14 @@ from scipy.stats import gaussian_kde
 from scipy.stats import multivariate_normal
 
 from utils.file import read_yaml, write_yaml, get_full_name, write_pickle
-from utils.loggingBase import LoggingBase
 
 from ...benchmarks.functions import registered_functions
 from ...benchmarks.fom import get_diversity_fom, compute_emprical_variation
 from ...data.buffer import CacheBuffer
 from ...viz.plot import plot_pca_2d, plt_hist2D, plot_cost, plot_fn2d, show_solution_region, plot_x_y
 from ...data.vector import index_to_xval
+from ..base import AlgBase
+from utils.data.database import Database
 
 from sortedcontainers import SortedList
 
@@ -121,11 +122,10 @@ class CEM:
         pdf = self.evaluate_pdf(samples)
         return (-np.log(pdf)).mean(-1)
 
-class CEMSearch(LoggingBase):
+class CEMSearch(AlgBase):
 
     # noinspection PyUnusedLocal
-    def __init__(self, spec_file: str = '', spec_dict: Optional[Mapping[str, Any]] = None,
-                 load: bool = False, use_time_stamp: bool = True, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:
         """
         Parameters
         ----------
@@ -147,43 +147,18 @@ class CEMSearch(LoggingBase):
         load: bool
         kwargs: Dict[str, Any]
         """
-        LoggingBase.__init__(self)
+        super().__init__(*args, **kwargs)
 
-        if spec_file:
-            specs = read_yaml(spec_file)
-        else:
-            specs = spec_dict
-
-        self.specs = specs
+        specs = self.specs
         params = specs['params']
 
-        if load:
-            self.work_dir = Path(spec_file).parent
-        else:
-            suffix = params.get('suffix', '')
-            prefix = params.get('prefix', '')
-            if use_time_stamp:
-                unique_name = time.strftime('%Y%m%d%H%M%S')
-                unique_name = get_full_name(unique_name, prefix, suffix)
-            else:
-                unique_name = f'{prefix}' if prefix else ''
-                if suffix:
-                    unique_name = f'{unique_name}_{suffix}' if unique_name else f'{suffix}'
-
-            self.work_dir = Path(specs['root_dir']) / f'{unique_name}'
-            write_yaml(self.work_dir / 'params.yaml', specs, mkdir=True)
-
-        self.load = load
         self.seed = params['seed']
-        self.ndim = params['ndim']
         self.nsamples = params['nsamples']
         self.n_init_samples = params['n_init_samples']
         self.niter = params['niter']
         self.cut_off = params['cut_off']
-        self.input_scale = params['input_scale']
-        # goal has to always be positive if not we'll change mode and negate self.goal
-        self.goal = params['goal_value']
-        self.mode = params['mode']
+        # self.ndim = params['ndim']
+        # self.input_scale = params['input_scale']
 
         self.allow_repeated = params.get('allow_repeated', False)
         self.elite_criteria = params.get('elite_criteria', 'optim')
@@ -195,17 +170,6 @@ class CEMSearch(LoggingBase):
         # allow repeated does not make sense when sampling is on-policy (on-policy: T -> repeat: T)
         self.allow_repeated = self.on_policy or self.allow_repeated
 
-        eval_fn = params['fn']
-        try:
-            fn = registered_functions[eval_fn]
-            self.fn = fn
-        except KeyError:
-            raise ValueError(f'{eval_fn} is not a valid benchmark function')
-
-        if self.goal < 0:
-            self.mode = 'le' if self.mode == 'ge' else 'ge'
-            self.fn = lambda x: -fn(x)
-
         # hacky version of passing input vectors around
         self.input_vectors_norm = [np.linspace(start=-1.0, stop=1.0, dtype='float32',
                                                num=100) for _ in range(self.ndim)]
@@ -214,6 +178,8 @@ class CEMSearch(LoggingBase):
         self.cem = CEM(self.input_vectors, dist_type=params['base_fn'],
                        average_coeff=params.get('average_coeff', 1),
                        gauss_sigma=params.get('gauss_sigma', None))
+
+        self.db =
         self.buffer = CacheBuffer(self.mode, self.goal, self.cut_off,
                                   with_frequencies=self.allow_repeated)
 
@@ -224,14 +190,6 @@ class CEMSearch(LoggingBase):
     def set_seed(cls, seed):
         random.seed(seed)
         np.random.seed(seed)
-
-    def score(self, fvals):
-        if self.mode == 'le':
-            err = (fvals - self.goal) / self.goal
-        else:
-            err = (self.goal - fvals) / self.goal
-        scores = np.maximum(err, 0)
-        return scores
 
     def save_checkpoint(self, saved_dict):
         saved_dict.update(dict(buffer=self.buffer, cem=self.cem))
@@ -297,15 +255,6 @@ class CEMSearch(LoggingBase):
 
         top_samples = sorted_samples[:top_index]
 
-        # plot exploration
-        if self.ndim == 2:
-            fpath = self.work_dir / get_full_name(name='dist', prefix='training',
-                                                  suffix=f'{iter_cnt}_before')
-            s = self.input_scale
-            _range = np.array([[-s, s], [-s, s]])
-            plt_hist2D(index_to_xval(self.input_vectors, samples), fpath=fpath, range=_range,
-                       cmap='binary')
-
         return top_samples
 
     def setup_state(self):
@@ -326,14 +275,6 @@ class CEMSearch(LoggingBase):
             samples, sample_fvals = self.collect_samples(self.n_init_samples, uniform=True)
             top_samples = self.get_top_samples(0, samples, sample_fvals)
             self.cem.fit(top_samples)
-            if self.ndim == 2:
-                xdata_ind = self.cem.sample(1000)
-                fpath = self.work_dir / get_full_name(name='dist', prefix='training',
-                                                      suffix=f'0_after')
-                s = self.input_scale
-                _range = np.array([[-s, s], [-s, s]])
-                plt_hist2D(index_to_xval(self.input_vectors, xdata_ind), fpath=fpath,
-                           range=_range, cmap='binary')
 
         return iter_cnt, avg_cost,  sim_cnt_list, sample_cnt_list, n_sols_in_buffer, top_means
 
@@ -372,14 +313,6 @@ class CEMSearch(LoggingBase):
 
     def report_accuracy(self, ntimes, nsamples):
         accuracy_list, times, div_list = [], [], []
-
-        if self.ndim == 2:
-            sample_ids = self.sample_model(nsamples)
-            s = self.input_scale
-            _range = np.array([[-s, s], [-s, s]])
-            plt_hist2D(index_to_xval(self.input_vectors, sample_ids),
-                       fpath=self.work_dir / 'trained_policy',
-                       range=_range, cmap='binary')
 
         for iter_id in range(ntimes):
             s = time.time()
@@ -486,15 +419,6 @@ class CEMSearch(LoggingBase):
             top_samples = self.get_top_samples(iter_cnt+1, samples, sample_fvals)
             self.cem.fit(top_samples)
 
-            if (iter_cnt + 1) % 10 == 0 and self.ndim == 2:
-                xdata_ind = self.sample_model(1000)
-                fpath = self.work_dir / get_full_name(name='dist', prefix='training',
-                                                      suffix=f'{iter_cnt+1}_after')
-                s = self.input_scale
-                _range = np.array([[-s, s], [-s, s]])
-                plt_hist2D(index_to_xval(self.input_vectors, xdata_ind),
-                           fpath=fpath, range=_range, cmap='binary')
-
             iter_cnt += 1
 
             saved_data = dict(
@@ -515,10 +439,5 @@ class CEMSearch(LoggingBase):
 
     def main(self):
         self.set_seed(self.seed)
-        if self.ndim == 2:
-            x, y = self.input_vectors
-            plot_fn2d(x, y, self.fn, fpath=str(self.work_dir / 'fn2D.png'), cmap='viridis')
-            show_solution_region(x, y, self.fn, self.goal, mode=self.mode,
-                                 fpath=str(self.work_dir / 'dist2D.png'), cmap='binary')
         self._run_alg()
         self.check_solutions(ntimes=10, nsamples=100)
