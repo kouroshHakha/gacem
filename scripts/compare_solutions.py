@@ -5,7 +5,7 @@ import argparse
 import numpy as np
 import itertools
 
-from optnet.viz.plot import pca_scatter2d, tsne_scatter2d
+from gacem.viz.plot import pca_scatter2d, tsne_scatter2d
 
 from utils.pdb import register_pdb_hook
 from utils.importlib import import_class

@@ -6,7 +6,7 @@ from utils.pdb import register_pdb_hook
 from utils.importlib import import_class
 from utils.file import read_yaml
 
-from optnet.alg.base import AlgBase
+from gacem.alg.base import AlgBase
 
 register_pdb_hook()
 

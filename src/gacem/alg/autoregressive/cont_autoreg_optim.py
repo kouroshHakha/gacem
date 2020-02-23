@@ -30,6 +30,7 @@ from ...models.made import MADE
 from ..random.random import Random
 from ...data.vector import index_to_xval, xval_to_index
 from ..utils.weight_compute import weight2, weight
+from ..base import AlgBase
 
 from ...viz.plot import (
     plot_pca_2d, plt_hist2D, plot_cost, plot_learning_with_epochs, plot_x_y
@@ -853,14 +854,11 @@ class AutoRegSearch(LoggingBase):
 
     def check_solutions(self, ntimes=1, nsamples=1000):
         print('-------- REPORT --------')
-        # self.check_random_solutions(ntimes, nsamples)
         acc, std, divesity = self.report_accuracy(ntimes, nsamples)
         ent = self.report_entropy(ntimes, nsamples)
 
         saved_data = dict(acc=acc, std=std, divesity=divesity, ent=ent)
         write_yaml(self.work_dir / 'performance.yaml', saved_data)
-        # self.report_variation(nsamples)
-        # self.plot_model_sol_pca()
 
     def check_random_solutions(self, ntimes, nsamples):
         rnd_specs = deepcopy(self.specs)
@@ -874,4 +872,4 @@ class AutoRegSearch(LoggingBase):
         # input('Press Enter To continue:')
         self.set_seed(self.seed)
         self._run_alg()
-        self.check_solutions(ntimes=10, nsamples=100)
+        self.check_solutions(ntimes=1, nsamples=100)

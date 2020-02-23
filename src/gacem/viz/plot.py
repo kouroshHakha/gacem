@@ -33,7 +33,7 @@ def plt_hist2D(data: np.ndarray,  ax=None, fpath='', show_fig=False, show_colorb
         xmax = np.max(data[:, 0])
         ymin = np.min(data[:, 1])
         ymax = np.max(data[:, 1])
-        range = np.ndarray[[xmin, xmax], [ymin, ymax]]
+        range = np.array([[xmin, xmax], [ymin, ymax]])
 
     ax = _get_ax(ax)
     im = ax.hist2d(data[:, 0], data[:, 1], bins=100, range=range, **kwargs)

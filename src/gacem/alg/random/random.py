@@ -7,11 +7,11 @@ import time
 from utils.file import read_yaml, write_yaml, get_full_name
 from utils.loggingBase import LoggingBase
 
-from optnet.benchmarks.functions import registered_functions
-from optnet.benchmarks.fom import (
+from gacem.benchmarks.functions import registered_functions
+from gacem.benchmarks.fom import (
     compute_emprical_variation, get_diversity_fom
 )
-from optnet.viz.plot import (
+from gacem.viz.plot import (
     plot_fn2d, plt_hist2D, show_solution_region
 )
 

@@ -1,22 +1,20 @@
-alg_class: optnet.alg.cross_entropy.cem_optim.CEMSearch
-root_dir: data
+alg_class: gacem.alg.cross_entropy.cemsearch.CEMSearch
+root_dir: outputs
 params:
   prefix: synt_2d_cem_gauss
-  suffix: optim_on_co0p4_ns25_sig10
-  seed: 10
-  ndim: 2
+  suffix: on_co0p4_ns25_sig10
+  seed: 4567567
   base_fn: gauss
   cut_off: 10
-  fn: synt
-  goal_value: 2
-  input_scale: 5.0
-  mode: le
   n_init_samples: 50
-  niter: 21
+  niter: 20
   nsamples: 25
   num_input_points: 100
-  allow_repeated: True
-  elite_criteria: csp
   on_policy: True
-  average_coeff: 1
-  gauss_sigma: 10
+  gauss_sigma: 5
+  average_coeff: 0.8
+  bb_env: bb_envs/src/benchmark_functions/envs/synt_env1.yaml
+
+  check_params:
+    ntimes: 10
+    nsamples: 100

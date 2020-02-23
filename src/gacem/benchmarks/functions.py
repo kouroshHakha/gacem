@@ -5,7 +5,7 @@ from typing import Union, List
 import matplotlib.pyplot as plt
 import numpy as np
 
-from optnet.alg.utils.weight_compute import weight
+from gacem.alg.utils.weight_compute import weight
 
 def mixture_ackley(x: Union[np.ndarray, numbers.Number]) -> np.ndarray:
     # visualize it for x.dim = 2

@@ -1,7 +1,7 @@
 import argparse
 
 from utils.pdb import register_pdb_hook
-from optnet.viz.animate import convert
+from gacem.viz.animate import convert
 
 register_pdb_hook()
 

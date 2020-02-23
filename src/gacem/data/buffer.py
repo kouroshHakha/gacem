@@ -3,7 +3,7 @@ from typing import Optional
 
 import numpy as np
 
-from optnet.alg.utils.weight_compute import weight, weight2
+from gacem.alg.utils.weight_compute import weight, weight2
 from utils.data import split_data
 
 

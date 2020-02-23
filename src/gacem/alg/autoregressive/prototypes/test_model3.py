@@ -8,9 +8,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from optnet.alg.utils.weight_compute import weight
-from optnet.benchmarks.functions import ackley
-from optnet.models.made import MADE
+from gacem.alg.utils.weight_compute import weight
+from gacem.benchmarks.functions import ackley
+from gacem.models.made import MADE
 from utils.data import split_data
 from utils.pdb import register_pdb_hook
 

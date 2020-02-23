@@ -20,9 +20,9 @@ import torch.optim as optim
 from matplotlib import transforms
 from torch.utils.tensorboard import SummaryWriter
 
-from optnet.benchmarks.functions import ackley, show_weight_on_all
-from optnet.data.buffer import CacheBuffer
-from optnet.models.made import MADE
+from gacem.benchmarks.functions import ackley, show_weight_on_all
+from gacem.data.buffer import CacheBuffer
+from gacem.models.made import MADE
 from utils.pdb import register_pdb_hook
 
 register_pdb_hook()
