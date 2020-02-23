@@ -1,0 +1,22 @@
+alg_class: gacem.alg.cross_entropy.cemsearch.CEMSearch
+root_dir: outputs
+params:
+  prefix: cs_amp_3d_cem_gauss
+  suffix: onpolicy_co0p4_ns25
+  seed: 10
+  ndim: 20
+  base_fn: gauss
+  cut_off: 10
+  n_init_samples: 50
+  niter: 201
+  nsamples: 25
+  num_input_points: 100
+  allow_repeated: True
+  elite_criteria: csp
+  on_policy: True
+  average_coeff: 1
+  bb_env: bb_envs/src/ngspice/envs/cs_amp.yaml
+
+  check_params:
+    ntimes: 10
+    nsamples: 100
