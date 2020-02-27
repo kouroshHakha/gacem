@@ -7,6 +7,7 @@ import time
 import abc
 from pathlib import Path
 import numpy as np
+import atexit
 
 
 from utils.file import read_yaml, write_yaml, get_full_name, read_pickle, write_pickle
@@ -16,8 +17,6 @@ from utils.data.database import Database
 from bb_eval_engine.util.importlib import import_bb_env
 from bb_eval_engine.data.design import Design
 from bb_eval_engine.base import EvaluationEngineBase
-
-from ..viz.plot import plt_hist2D
 
 
 class AlgBase(LoggingBase, abc.ABC):
@@ -50,10 +49,11 @@ class AlgBase(LoggingBase, abc.ABC):
         else:
             specs = spec_dict
 
+        self.use_model = kwargs.get('use_model', False)
         self.specs = specs
         self.load = load
 
-        if load:
+        if load or self.use_model:
             self.work_dir = Path(spec_file).parent
         else:
             unique_name = time.strftime('%Y%m%d%H%M%S')
@@ -76,19 +76,24 @@ class AlgBase(LoggingBase, abc.ABC):
         self.db = Database(Design)
 
         self.state = None
+        self.iter_cnt = 0
 
         LoggingBase.__init__(self, self.work_dir)
+        atexit.register(self.end)
 
     @abc.abstractmethod
     def collect_samples(self, n: int, is_random: bool = False, **kwargs) -> Sequence[Design]:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def train(self, iter_cnt: int, samples: Sequence[Design], **kwargs):
+    def train(self, samples: Sequence[Design], **kwargs):
         raise NotImplementedError
 
+    def update_state(self):
+        self._update_state()
+
     @abc.abstractmethod
-    def update_state(self, iter_cnt: int):
+    def _update_state(self):
         raise NotImplementedError
 
     @classmethod
@@ -97,7 +102,7 @@ class AlgBase(LoggingBase, abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def stop(self, iter_cnt) -> bool:
+    def stop(self) -> bool:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -129,30 +134,28 @@ class AlgBase(LoggingBase, abc.ABC):
         raise NotImplementedError
 
 
-    @abc.abstractmethod
     def end(self) -> None:
+        self.save_checkpoint()
+        self._end()
+
+    @abc.abstractmethod
+    def _end(self) -> None:
         """The end goes here! things like plotting .etc"""
         raise NotImplementedError
 
     def _run_alg(self):
         """override this if you want a more custom implementation"""
         self.setup_state()
-        iter_cnt = self.state['iter_cnt']
-        self.db = self.state['db']
-        while not self.stop(iter_cnt):
-            samples: Sequence[Design] = self.collect_samples(self.nsamples,
-                                                             is_random=(iter_cnt == 0))
-
-            if self.bb_env.ndim == 2:
-                ranges = np.array(list(zip(self.bb_env.params_min, self.bb_env.params_max)))
-                plt_hist2D(np.array(samples), fpath=self.work_dir / f'samples_{iter_cnt}.png',
-                           cmap='binary', range=ranges , show_colorbar=True)
+        self.iter_cnt = self.state['iter_cnt']
+        # self.db = self.state['db']
+        while not self.stop():
+            is_random = (self.iter_cnt == 0) and not self.use_model
+            samples: Sequence[Design] = self.collect_samples(self.nsamples, is_random=is_random)
+            self.train(samples)
+            self.iter_cnt += 1
             avg_obj = np.mean([sample['obj'] for sample in samples])
-            self.info(f'Iter {iter_cnt}: avg_obj = {avg_obj}')
-            self.train(iter_cnt, samples)
-            iter_cnt += 1
-            self.update_state(iter_cnt)
-
+            self.info(f'Iter {self.iter_cnt}: avg_obj = {avg_obj}')
+            self.update_state()
 
     def update_obj(self, designs: Sequence[Design]) -> Sequence[Design]:
         """ Takes in a list of designs and updates their obj attribute to reflect the objective of
@@ -177,8 +180,9 @@ class AlgBase(LoggingBase, abc.ABC):
 
         return designs
 
-    def save_checkpoint(self, data_dict: Dict[str, Any]) -> None:
-        write_pickle(self.work_dir / 'checkpoint.pickle', data_dict)
+    def save_checkpoint(self) -> None:
+        self.info('Saving Checkpoint ...')
+        write_pickle(self.work_dir / 'checkpoint.pickle', self.state)
 
     def load_checkpoint(self) -> Dict[str, Any]:
         return read_pickle(self.work_dir / 'checkpoint.pickle')
@@ -224,4 +228,3 @@ class AlgBase(LoggingBase, abc.ABC):
         self._set_seed(self.seed)
         self._run_alg()
         self.check_solutions(ntimes=self.check_ntimes, nsamples=self.check_nsamples)
-        self.end()

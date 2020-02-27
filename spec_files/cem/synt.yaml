@@ -7,13 +7,13 @@ params:
   base_fn: gauss
   cut_off: 10
   n_init_samples: 50
-  niter: 20
-  nsamples: 25
+  niter: 100
+  nsamples: 100
   num_input_points: 100
   on_policy: True
   gauss_sigma: 5
-  average_coeff: 0.8
-  bb_env: bb_envs/src/benchmark_functions/envs/synt_env1.yaml
+  average_coeff: 1
+  bb_env: bb_envs/src/benchmark_functions/envs/synt_20d_env1.yaml
 
   check_params:
     ntimes: 10

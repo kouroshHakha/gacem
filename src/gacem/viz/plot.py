@@ -177,6 +177,7 @@ def scatter2d(data: np.ndarray, labels: Optional[np.ndarray] = None,
     marker_color = list(itertools.product(markers, colors))
     random.shuffle(marker_color)
     marker_color = iter(marker_color)
+    im = None
     if labels is not None:
         for label in np.unique(labels):
             pos = (labels == label)
@@ -185,15 +186,16 @@ def scatter2d(data: np.ndarray, labels: Optional[np.ndarray] = None,
             else:
                 _label = label_mapping[label]
             marker, color = next(marker_color)
-            ax.scatter(data[pos, 0], data[pos, 1], marker=marker, color=color,
-                       label=_label, **kwargs)
+            im = ax.scatter(data[pos, 0], data[pos, 1], marker=marker, color=color,
+                            label=_label, **kwargs)
     else:
-        ax.scatter(data[:, 0], data[:, 1], marker='o', **kwargs)
+        im = ax.scatter(data[:, 0], data[:, 1], **kwargs)
 
     ax.legend(bbox_to_anchor=(1.04, 1), loc='upper left')
     if fig_title is None:
         ax.set_title(fig_title)
     _save_show_fig(fpath, show_fig, dpi=400, bbox_inches="tight")
+    return im
 
 def pca_scatter2d(data: np.ndarray, labels: Optional[np.ndarray] = None,
                   label_mapping: Optional[Mapping[int, str]] = None,
@@ -201,7 +203,7 @@ def pca_scatter2d(data: np.ndarray, labels: Optional[np.ndarray] = None,
 
     pca_2d = PCA(n_components=2)
     data_hat = pca_2d.fit_transform(data)
-    scatter2d(data_hat, labels, label_mapping, ax, fpath, show_fig, title, **kwargs)
+    return scatter2d(data_hat, labels, label_mapping, ax, fpath, show_fig, title, **kwargs)
 
 def tsne_scatter2d(data: np.ndarray, labels: Optional[np.ndarray] = None,
                    label_mapping: Optional[Mapping[int, str]] = None,
@@ -209,4 +211,4 @@ def tsne_scatter2d(data: np.ndarray, labels: Optional[np.ndarray] = None,
                    ax=None, fpath='', show_fig=False, title=None, **kwargs):
 
     data_hat = TSNE(n_components=2, random_state=seed).fit_transform(data)
-    scatter2d(data_hat, labels, label_mapping, ax, fpath, show_fig, title, **kwargs)
+    return scatter2d(data_hat, labels, label_mapping, ax, fpath, show_fig, title, **kwargs)

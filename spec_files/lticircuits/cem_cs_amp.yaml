@@ -2,7 +2,7 @@ alg_class: gacem.alg.cross_entropy.cemsearch.CEMSearch
 root_dir: outputs
 params:
   prefix: cs_amp_cem_gauss
-  suffix: offpolicy_co0p4_ns25
+  suffix: on_policy_co0p4_ns25
   seed: 100
   base_fn: gauss
   cut_off: 10
@@ -11,9 +11,9 @@ params:
   nsamples: 25
   num_input_points: 100
   on_policy: True
-  gauss_sigma: 2
+  gauss_sigma: 5
   average_coeff: 1
-  bb_env: bb_envs/src/lticircuits/envs/cs_env1.yaml
+  bb_env: bb_envs/src/lticircuits/envs/cs_env2.yaml
 
   check_params:
     ntimes: 10

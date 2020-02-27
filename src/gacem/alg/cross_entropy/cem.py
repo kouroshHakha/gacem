@@ -44,15 +44,16 @@ class CEM:
         ndata, ndim = data.shape
         alpha = self.average_coeff
         if self.type == 'gauss':
-            # TODO: investigate why this is more stable than using new_mu in computing new_var
             old_mu = self.params.get('mu', 0)
+            new_mu = np.mean(data, axis=0)
             if self.gauss_sigma is None:
                 old_var = self.params.get('var', 0)
+                # https://arxiv.org/pdf/1604.00772.pdf (section 3.1)
+                # for covariance adaptation we should use old_mu
                 new_var = 1 / ndata * (data - old_mu).T @ (data - old_mu)
                 self.params['var'] = old_var * (1 - alpha) + new_var * alpha
             else:
                 self.params['var'] = self.gauss_sigma * np.eye(ndim)
-            new_mu = np.mean(data, axis=0)
             self.params['mu'] = old_mu * (1 - alpha) + new_mu * alpha
         elif self.type == 'kde':
             self.params['kde'] = gaussian_kde(np.transpose(data))

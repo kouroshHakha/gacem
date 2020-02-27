@@ -1,4 +1,4 @@
-from typing import Sequence
+from typing import Sequence, cast
 
 import random
 import time
@@ -6,9 +6,11 @@ import numpy as np
 from ..base import AlgBase
 from .cem import CEM
 from bb_eval_engine.data.design import Design
-from ...viz.plot import plot_x_y, plot_cost
+from ...viz.plot import plot_x_y, plot_cost, plt_hist2D, scatter2d
+import matplotlib.pyplot as plt
 
 from sortedcontainers import SortedList
+from benchmark_functions.flow import FnFlow
 
 
 class CEMSearch(AlgBase):
@@ -55,6 +57,7 @@ class CEMSearch(AlgBase):
 
         # attribute to keep track of top designs
         self.fvals = SortedList(key=lambda x: x['obj'])
+        self.nsol = 0
 
     @classmethod
     def _set_seed(cls, seed):
@@ -82,8 +85,8 @@ class CEMSearch(AlgBase):
 
         return acc_mean, acc_std
 
-    def stop(self, iter_cnt) -> bool:
-        return iter_cnt >= self.niter
+    def stop(self) -> bool:
+        return self.iter_cnt >= self.niter
 
     def get_top_samples(self, samples: Sequence[Design]) -> Sequence[Design]:
 
@@ -100,9 +103,22 @@ class CEMSearch(AlgBase):
 
         return top_samples
 
-    def train(self, iter_cnt: int, samples: Sequence[Design], **kwargs):
+    def train(self, samples: Sequence[Design], **kwargs):
         top_samples = self.get_top_samples(samples)
-        self.cem.fit(np.array(top_samples))
+        top_samples_np = np.array(top_samples)
+        if self.bb_env.ndim == 2:
+            ranges = np.array(list(zip(self.bb_env.params_min, self.bb_env.params_max)))
+            fpath = self.work_dir / f'samples_{self.iter_cnt}.png'
+            plt.close()
+            ax = plt.gca()
+            self.bb_env.plot_contours(ranges=ranges, ax=ax)
+            plt_hist2D(np.array(samples), cmap='binary', range=ranges, ax=ax)
+            ax.scatter(top_samples_np[:, 0], top_samples_np[:, 1], marker='x', color='red')
+            mean = top_samples_np.mean(0)
+            ax.scatter(mean[0], mean[1], marker='x', color='blue')
+            plt.savefig(fpath, dpi=200)
+
+        self.cem.fit(top_samples_np)
 
     def setup_state(self):
         if self.load:
@@ -116,33 +132,29 @@ class CEMSearch(AlgBase):
                 sim_cnt_list=[],
                 sample_cnt_list=[],
                 n_sols_in_db=[],
-                top_means=dict(top_20=[], top_40=[], top_60=[]),
+                top_20=[],
                 model=self.cem,
                 db=self.db,
             )
+            if self.use_model:
+                state = self.load_checkpoint()
+                self.state['model'] = state['model']
+                self.cem = state['model']
 
-    def update_state(self, iter_cnt):
+    def _update_state(self):
         state = self.state
-        objs = [x['obj'] for x in self.db]
-        sorted_objs = np.array(sorted(objs))
-        state['iter_cnt'] = iter_cnt
+        state['iter_cnt'] = self.iter_cnt
         state['sim_cnt_list'].append(len(self.db))
         state['sample_cnt_list'].append(self.db.tot_freq)
-        state['n_sols_in_db'].append(int((sorted_objs <= 0).sum(-1)))
-        if len(sorted_objs) > 0:
-            mean = np.mean(sorted_objs)
-            m20 = np.mean(sorted_objs[:20])
-            m40 = np.mean(sorted_objs[:40])
-            m60 = np.mean(sorted_objs[:60])
+        state['n_sols_in_db'].append(self.nsol)
+        if len(self.fvals) > 0:
+            mean = m20 = np.mean([x['obj'] for x in self.fvals[:20]])
         else:
-            mean, m20, m40, m60 = 0, 0, 0, 0
+            mean, m20 = 0, 0
         state['avg_cost'].append(mean)
-        state['top_means']['top_20'].append(m20)
-        state['top_means']['top_40'].append(m40)
-        state['top_means']['top_60'].append(m60)
+        state['top_20'].append(m20)
         state['model'] = self.cem
         state['db'] = self.db
-        self.save_checkpoint(state)
 
     def sample_model(self, n: int) -> Sequence[Design]:
         samples = self.cem.sample(n)
@@ -171,6 +183,8 @@ class CEMSearch(AlgBase):
 
                     tried[sample] = sample
                     if sample['valid']:
+                        if sample['obj'] <= 0:
+                            self.nsol += 1
                         self.fvals.add(sample)
                         samples.append(sample)
                         n_remaining -= 1
@@ -180,7 +194,7 @@ class CEMSearch(AlgBase):
 
         return samples
 
-    def end(self) -> None:
+    def _end(self) -> None:
         plot_cost(self.state['avg_cost'], fpath=self.work_dir / 'cost.png')
         plot_x_y(self.state['sample_cnt_list'], self.state['n_sols_in_db'],
                  fpath=self.work_dir / 'n_sols.png',
