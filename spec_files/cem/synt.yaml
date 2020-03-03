@@ -1,19 +1,20 @@
 alg_class: gacem.alg.cross_entropy.cemsearch.CEMSearch
 root_dir: outputs
 params:
-  prefix: synt_2d_cem_gauss
-  suffix: on_co0p4_ns25_sig10
-  seed: 4567567
+  prefix: synt_20d_cem_gauss
+  suffix: on_co0p4_ns100_sig5
+  seed: 456756
   base_fn: gauss
-  cut_off: 10
-  n_init_samples: 50
-  niter: 100
+  cut_off: 50
+  n_init_samples: ''
+  niter: 30
   nsamples: 100
   num_input_points: 100
   on_policy: True
   gauss_sigma: 5
   average_coeff: 1
-  bb_env: bb_envs/src/benchmark_functions/envs/synt_20d_env1.yaml
+  model: cem
+  bb_env: bb_envs/src/benchmark_functions/envs/synt_env1.yaml
 
   check_params:
     ntimes: 10
