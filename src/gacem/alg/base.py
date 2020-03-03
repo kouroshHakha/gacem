@@ -82,7 +82,7 @@ class AlgBase(LoggingBase, abc.ABC):
         atexit.register(self.end)
 
     @abc.abstractmethod
-    def collect_samples(self, n: int, is_random: bool = False, **kwargs) -> Sequence[Design]:
+    def collect_samples(self, n: int, is_init: bool = False, **kwargs) -> Sequence[Design]:
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -149,8 +149,8 @@ class AlgBase(LoggingBase, abc.ABC):
         self.iter_cnt = self.state['iter_cnt']
         # self.db = self.state['db']
         while not self.stop():
-            is_random = (self.iter_cnt == 0) and not self.use_model
-            samples: Sequence[Design] = self.collect_samples(self.nsamples, is_random=is_random)
+            is_init = (self.iter_cnt == 0) and not self.use_model
+            samples: Sequence[Design] = self.collect_samples(self.nsamples, is_init=is_init)
             self.train(samples)
             self.iter_cnt += 1
             avg_obj = np.mean([sample['obj'] for sample in samples])
