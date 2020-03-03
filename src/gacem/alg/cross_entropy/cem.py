@@ -35,25 +35,47 @@ class CEM:
         self.gauss_sigma = kwargs.get('gauss_sigma', None)
 
         self.average_coeff = average_coeff
-        self.params = {}
+
+        if self.type == 'gauss':
+            start = (self.params_min + self.params_max) / 2
+            # if self.gauss_sigma:
+            #     std_init = self.gauss_sigma
+            # else:
+            # sigma should cover everything initially
+            std_init = np.max((self.params_max - self.params_min)) * 3
+            self.params = dict(mu=start, var=std_init * np.eye(dim))
+        else:
+            raise ValueError('Not supported yet, sorry!!')
 
     def fit(self, data):
         # data has to be in units of indices
         if len(data.shape) > 2:
             raise ValueError('Data should be in shape of Nxd (N samples with d dimensions)')
+        # We are fitting a continuous distribution to discrete data, that won't just work quite
+        # right, so add noise [0,1)^D to data and then fit it
+        nvec = np.random.rand(*data.shape)
+        data = data + nvec
         ndata, ndim = data.shape
         alpha = self.average_coeff
         if self.type == 'gauss':
             old_mu = self.params.get('mu', 0)
             new_mu = np.mean(data, axis=0)
-            if self.gauss_sigma is None:
-                old_var = self.params.get('var', 0)
-                # https://arxiv.org/pdf/1604.00772.pdf (section 3.1)
-                # for covariance adaptation we should use old_mu
-                new_var = 1 / ndata * (data - old_mu).T @ (data - old_mu)
-                self.params['var'] = old_var * (1 - alpha) + new_var * alpha
-            else:
-                self.params['var'] = self.gauss_sigma * np.eye(ndim)
+            old_var = self.params.get('var', 0)
+            # if self.gauss_sigma is None:
+            # https://arxiv.org/pdf/1604.00772.pdf (section 3.1)
+            # for covariance adaptation we should use old_mu
+            # new_var = 1 / ndata * (data - old_mu).T @ (data - old_mu)
+            new_var = 1 / ndata * (data - new_mu).T @ (data - new_mu)
+            self.params['var'] = old_var * (1 - alpha) + new_var * alpha
+            if self.gauss_sigma:
+                # don't let sigma to shrink to zero, in case that's happening re-normalize the
+                # covariance to expand
+                var = self.params['var']
+                var_t = np.diag(var).sum()
+                if var_t < self.gauss_sigma ** 2:
+                    print('adjusting variance ...')
+                    var = self.gauss_sigma * np.eye(ndim)
+                self.params['var'] = var
             self.params['mu'] = old_mu * (1 - alpha) + new_mu * alpha
         elif self.type == 'kde':
             self.params['kde'] = gaussian_kde(np.transpose(data))
