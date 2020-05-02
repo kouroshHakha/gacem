@@ -1,0 +1,6 @@
+setup.py
+gym_bm.egg-info/PKG-INFO
+gym_bm.egg-info/SOURCES.txt
+gym_bm.egg-info/dependency_links.txt
+gym_bm.egg-info/requires.txt
+gym_bm.egg-info/top_level.txt
