@@ -26,7 +26,7 @@ class MaskedLinear(nn.Linear):
         return tf.linear(_input, self.mask * self.weight, self.bias)
 
 class MADE(nn.Module):
-    def __init__(self, n_in, hidden_sizes, n_out, num_masks=1, natural_ordering=False, seed=0,
+    def __init__(self, n_in, hidden_sizes, n_out, num_masks=1, natural_ordering=False, seed=None,
                  bias_init = 0.1):
         """
         nin: integer; number of inputs
@@ -49,7 +49,7 @@ class MADE(nn.Module):
 
         # define a simple MLP neural net
         self.net = []
-        hs = [n_in] + hidden_sizes + [n_out]
+        hs = [n_in] + list(hidden_sizes) + [n_out]
 
         # dropout_layer = nn.Dropout(0, inplace=True)
 
@@ -101,8 +101,11 @@ class MADE(nn.Module):
         L = len(self.hidden_sizes)
 
         # fetch the next seed and construct a random stream
-        rng = np.random.RandomState(self.seed)
-        self.seed = (self.seed + 1) % self.num_masks
+        if self.seed:
+            rng = np.random.RandomState(self.seed)
+            self.seed = (self.seed + 1) % self.num_masks
+        else:
+            rng = np.random.RandomState()
 
         # sample the order of the inputs and the connectivity of all neurons
         if self.natural_ordering or force_natural_ordering:
