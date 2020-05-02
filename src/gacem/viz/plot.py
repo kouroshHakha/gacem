@@ -18,15 +18,15 @@ def _get_ax(ax):
     return ax
 
 def _save_show_fig(fpath: Union[str, Path], show_fig: bool, **kwargs):
-    fpath: Path = Path(fpath)
-    fpath.parent.mkdir(parents=True, exist_ok=True)
-    if fpath:
+    if fpath is not None:
+        fpath: Path = Path(fpath)
+        fpath.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(fpath, **kwargs)
     elif show_fig:
         plt.show()
 
-def plt_hist2D(data: np.ndarray,  ax=None, fpath='', show_fig=False, show_colorbar=False,
-               range: Optional[np.ndarray] = None, **kwargs):
+def plt_hist2D(data: np.ndarray, *, ax=None, fpath=None, show_fig=False, show_colorbar=False,
+               bins=100, range: Optional[np.ndarray] = None, **kwargs):
 
     if range is None:
         xmin = np.min(data[:, 0])
@@ -36,7 +36,7 @@ def plt_hist2D(data: np.ndarray,  ax=None, fpath='', show_fig=False, show_colorb
         range = np.array([[xmin, xmax], [ymin, ymax]])
 
     ax = _get_ax(ax)
-    im = ax.hist2d(data[:, 0], data[:, 1], bins=100, range=range, **kwargs)
+    im = ax.hist2d(data[:, 0], data[:, 1], bins=bins, range=range, **kwargs)
     ax.set_xlabel('x1')
     ax.set_ylabel('x2')
 
