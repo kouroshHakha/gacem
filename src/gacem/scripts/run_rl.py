@@ -39,10 +39,10 @@ SUBSTITUTIONS = {'env': 'env_name',
                  'dt': 'datestamp'}
 
 # Only some algorithms can be parallelized (have num_cpu > 1):
-MPI_COMPATIBLE_ALGOS = ['reinforce']
+MPI_COMPATIBLE_ALGOS = ['es']
 
 # Algo names (used in a few places)
-BASE_ALGO_NAMES = ['reinforce']
+BASE_ALGO_NAMES = ['reinforce', 'es']
 
 
 def parse_and_execute_grid_search(cmd, args):

@@ -5,10 +5,13 @@ import gym
 import time
 from pathlib import Path
 
+from mpi4py import MPI
+
 
 from spinup.utils.logx import EpochLogger
 from spinup.utils.mpi_pytorch import setup_pytorch_for_mpi, sync_params, mpi_avg_grads
-from spinup.utils.mpi_tools import mpi_fork, mpi_avg, proc_id, mpi_statistics_scalar, num_procs
+from spinup.utils.mpi_tools import mpi_fork, proc_id, mpi_statistics_scalar, num_procs, broadcast
+from gacem.alg.utils.mpi_tools import gather
 
 import gacem.alg.reinforce.core as core
 
@@ -90,9 +93,9 @@ def reinforce(env_fn, *, env_kwargs=dict(),  actor_critic=core.Actor, ac_kwargs=
     setup_pytorch_for_mpi()
 
     # Set up logger and save configuration
+    output_dir = logger_kwargs['output_dir']
     logger = EpochLogger(**logger_kwargs)
     logger.save_config(locals())
-    print(logger.output_dir)
 
     # Random seed
     seed += 10000 * proc_id()
@@ -148,9 +151,10 @@ def reinforce(env_fn, *, env_kwargs=dict(),  actor_critic=core.Actor, ac_kwargs=
 
         # # store data points along the way
         # if (epoch % save_freq == 0) or (epoch == epochs-1):
-        #     path = Path(logger.output_dir) / 'trials' / f'trials{epoch}.h5'
-        #     path.parent.mkdir(parents=True, exist_ok=True)
-        #     save_dict_to_hdf5(data_np, path)
+        #     if proc_id() == 0:
+        #         path = Path(output_dir) / 'trials' / f'trials{epoch}.h5'
+        #         path.parent.mkdir(parents=True, exist_ok=True)
+        #         save_dict_to_hdf5(data_np, path)
 
         # Get loss and info values before update
         # Train policy with a single step of gradient descent
@@ -171,7 +175,10 @@ def reinforce(env_fn, *, env_kwargs=dict(),  actor_critic=core.Actor, ac_kwargs=
 
     # Prepare for interaction with environment
     start_time = time.time()
+    # obss is fake so just ignore it, it is here just to minimize the difference with the code base
     obss = env.reset(ntimes=local_steps_per_epoch)
+    best_rew = float('-inf')
+    best_sol = None
 
     # Main loop: collect experience in env and update/log each epoch
     for epoch in range(epochs):
@@ -189,19 +196,33 @@ def reinforce(env_fn, *, env_kwargs=dict(),  actor_critic=core.Actor, ac_kwargs=
         logps = logps.cpu().numpy()
         _, rews, _, info = env.step(acts)
 
+        # keep track of the best sol across all processes
+        amax_rew = np.argmax(rews)
+        max_rew = rews[amax_rew]
+        if max_rew > best_rew:
+            best_rew = max_rew
+            best_act = acts[amax_rew]
+
+            mp_best_rews = MPI.COMM_WORLD.gather(best_rew)
+            mp_best_acts = MPI.COMM_WORLD.gather(best_act)
+            if mp_best_rews is not None and mp_best_acts is not None:
+                best_idx = np.argmax(mp_best_rews)
+                best_rew = mp_best_rews[best_idx]
+                best_act = mp_best_acts[best_idx]
+
 
         for i in range(local_steps_per_epoch):
             # save and log
             buf.store(obss[i], acts[i], rews[i], logps[i])
 
 
-        logger.store(EpRet=rews)
+        logger.store(EpRet=rews, BestFit=best_rew)
         buf.finish_path()
         obss = env.reset(ntimes=local_steps_per_epoch)
 
-        # Save model
-        if (epoch % save_freq == 0) or (epoch == epochs-1):
-            logger.save_state({'env': env}, None)
+        # # Save model
+        # if (epoch % save_freq == 0) or (epoch == epochs-1):
+        #     logger.save_state({'env': env}, None)
 
         # Perform Reinforce update!
         update()
@@ -215,6 +236,7 @@ def reinforce(env_fn, *, env_kwargs=dict(),  actor_critic=core.Actor, ac_kwargs=
         logger.log_tabular('DeltaLossPi', average_only=True)
         logger.log_tabular('Entropy', average_only=True)
         logger.log_tabular('KL', average_only=True)
+        logger.log_tabular('BestFit', average_only=True)
         if 'Sigma' in logger.log_headers:
             logger.log_tabular('Sigma', average_only=True)
         logger.log_tabular('Time', time.time()-start_time)
