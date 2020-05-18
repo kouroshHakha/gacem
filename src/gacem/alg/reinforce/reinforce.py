@@ -22,6 +22,43 @@ from utils.hdf5 import save_dict_to_hdf5
 
 register_pdb_hook()
 
+"""
+Main Questions that should be answered to make this approach comparable and an alternative to CMA-ES
+
+1. Is this going to be more sample efficient than CMA-ES, and if so under what conditions? 
+is it problem dependant? is it dependent on hyper params (like popsize?)
+
+2. GACEM should always find solution in high dimensions, it may be slower than CMA-ES but should 
+defniitly not miss solutions.
+
+3. If the sample efficiency is not justified the final solutions should be at least more diverse 
+using GACEM? Someone may argue that this may not be that important and you can maybe run CMA-ES 
+more times with different seeds each time to find more solutions?
+We should be able to show that the very least benefit of our algorithm is that this happens 
+automatically with one seed input, as it explores interesting regions simultinously and no normal 
+dist has the capacity to represent the manifold GACEM can explore.
+
+4. Off-policy can really change everything
+If we can use all samples to fit the distribution of the solution space, it would change everything.
+We will definitley get better sample efficiency.
+We will keep track of all solutions and never forget anything because of low number of samples.
+(?? this may not be because of this algorithm itself but rather some external effects like BagNet)
+We can leverage reuse. In off-policy we should have a parameterized model (value function or 
+something else) that can be re-used to transfer knowledge even when dynamic changes in some 
+environments. We should compare CMA-ES from scratch on those envs and compare it againts this idea.
+This will have similarities wth BagNet, like the discriminator in BagNet is some sort of 
+parameterized model, for comparing models.
+
+Implementation game plan:
+For 1, 2, 3 we should get base line of PPO on this algorithm, to do this we need to first see if 
+the optimal behavior is even followed if overfitting is allowed. What I mean is that we should 
+sample some points with an imbalance in ratio in good regions and see taking a lot of gradient 
+updates results in forgetting the good points with less number of samples. If that's the case does 
+entropy penalty help? Once we have the optimal objective ppo on it should be the best exploration 
+and explotation in policy gradient algorithms, so we can trust the base-line we'll get.
+For 4 I have no idea yet, This exploration is left for later.
+"""
+
 
 class Buffer:
     """
@@ -149,12 +186,12 @@ def reinforce(env_fn, *, env_kwargs=dict(),  actor_critic=core.Actor, ac_kwargs=
         ac.train()
         data, data_np = buf.get(return_np=True)
 
-        # # store data points along the way
-        # if (epoch % save_freq == 0) or (epoch == epochs-1):
-        #     if proc_id() == 0:
-        #         path = Path(output_dir) / 'trials' / f'trials{epoch}.h5'
-        #         path.parent.mkdir(parents=True, exist_ok=True)
-        #         save_dict_to_hdf5(data_np, path)
+        # store data points along the way
+        if (epoch % save_freq == 0) or (epoch == epochs-1):
+            if proc_id() == 0:
+                path = Path(output_dir) / 'trials' / f'trials_{epoch}.h5'
+                path.parent.mkdir(parents=True, exist_ok=True)
+                save_dict_to_hdf5(data_np, path)
 
         # Get loss and info values before update
         # Train policy with a single step of gradient descent
